@@ -11,9 +11,7 @@ var BulletSpeed = 2.0;
 function nway(n, d, target){
     var velocity = new Vector2();
     velocity.subVectors(target, unit.position);
-    velocity.setLength(1);
-
-    var angle = Math.atan2(velocity.y, velocity.x);
+    var angle = velocity.getAngle();
     for(var i = 0; i < n && shooter.stage.bullets.length < MaxBullets; i++){
 	    var bullet = new LargeBullet();
 	    bullet.position = unit.position.clone();
@@ -22,6 +20,6 @@ function nway(n, d, target){
 	}
 }
 
-if(shooter.totalFrameCount % Frequency === 0){
+if(shooter.currentFrame % Frequency === 0){
     nway(Ways, Varying, shooter.player.position);
 }

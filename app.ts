@@ -1,4 +1,23 @@
+declare var $: any;
 
+// image pathes
+
+var origin: string = "http://phyzkit.net/shooter/";
+var rumiaImagePath: string           = origin + 'rumia.png';
+var rumiaImagePathF: string          = origin + 'rumia_f.png';
+var rumiaImagePathB: string          = origin + 'rumia_b.png';
+var rumiaImagePathL: string          = origin + 'rumia_l.png';
+var rumiaImagePathR: string          = origin + 'rumia_r.png';
+var kogasaImagePath: string          = origin + 'kogasa.png';
+var bulletLargeImagePath: string     = origin + 'bullet_large.png';
+var dartImagePath: string            = origin + 'dart.png';
+var pointerImagePath: string         = origin + 'pointer.png';
+var heartImagePath: string           = origin + 'heart.svg';
+var starImagePath: string            = origin + 'star.svg';
+var stageBackgroundImagePath: string = origin + 'ground.png';
+var stageCloudImagePath: string      = origin + 'cloud.png';
+var upperCloudImagePath: string      = origin + 'cloud_upper.png';
+var hitEffectImagePath: string       = origin + 'hiteffect.png';
 
 //////////////////////////////////////////////////////////
 // Game library
@@ -7,27 +26,35 @@
 class Vector2 {
     constructor(public x?: number = 0, public y?: number = 0) {
     }
-    static fromAngle(angle: number, length: number): Vector2{
+    static fromAngle(angle: number, length?: number = 1): Vector2{
     	return new Vector2(
 	    	length * Math.cos(angle), 
 	    	length * Math.sin(angle)
 	    );
     }
-    add(v: Vector2): void {
+    copy(v: Vector2): Vector2 {
+        this.x = v.x;
+        this.y = v.y;
+    }
+    add(v: Vector2): Vector2 {
         this.x += v.x;
         this.y += v.y;
+        return this;
     } 
-    addVectors(a: Vector2, b: Vector2): void {
+    addVectors(a: Vector2, b: Vector2): Vector2 {
         this.x = a.x + b.x;
         this.y = a.y + b.y;
+        return this;
     }
-    subVectors(a: Vector2, b: Vector2): void {
+    subVectors(a: Vector2, b: Vector2): Vector2 {
         this.x = a.x - b.x;
         this.y = a.y - b.y;
+        return this;
     }
-    mul(t: number): void{
+    mul(t: number): Vector2{
         this.x *= t;
         this.y *= t;
+        return this;
     }
     length(): number {
         return Math.sqrt(this.lengthSq());
@@ -35,17 +62,21 @@ class Vector2 {
     lengthSq(): number {
         return this.x * this.x + this.y * this.y;
     }
-    setLength(v: number): void{
+    setLength(v: number): Vector2{
     	var t = v / this.length();
     	this.x *= t;
     	this.y *= t;
+    	return this;
     }
     clone(): Vector2{
         return new Vector2(this.x, this.y);
     }
+    getAngle(): number{
+    	return Math.atan2(this.y, this.x);
+    }
 }
 
-function createImage(path: string): HTMLImageElement{
+function loadImage(path: string): HTMLImageElement{
     var img = new Image();
     img.src = path;
     return img;
@@ -57,11 +88,6 @@ class ResourceLoader{
     private loaders: { (): void; }[] = [];
 
     constructor(private onComplete: ()=>void){
-
-    }
-
-    private loading(): void{
-        this.resourceCount += 1;
     }
 
     private loaded(){
@@ -77,7 +103,6 @@ class ResourceLoader{
         img.addEventListener('error', this.loaded);
         img.addEventListener('abort', this.loaded);
         this.loaders.push(()=>{
-            this.loading();
             img.src = path;
         });
         return ()=>img.complete ? img : null;
@@ -93,7 +118,6 @@ class ResourceLoader{
         });
 
         this.loaders.push(()=>{
-            this.loading();
             request.open('get', path, false);
             request.send();
         });
@@ -102,12 +126,24 @@ class ResourceLoader{
 
     loadTextFromElement(id: string): () => string{
         var element = document.getElementById(id);
-        var text = element.innerText || element.textContent;
+        var text = element.textContent;
         return ()=>text;
+    }
+
+    jsonp(url: string, mapping?: (json: any) => any): () => any{
+        var json = null;
+        this.loaders.push(()=>{
+            $.getJSON(url, (data)=>{
+                json = data;
+                this.loaded();
+            });
+        });
+        return ()=>mapping ? mapping(json) : json;
     }
 
     start(): void{
     	if(this.loaders.length > 0){
+    		this.resourceCount = this.loaders.length;
 	        this.loaders.forEach((loader)=>loader());
 	        this.loaders = [];
         }else{
@@ -116,17 +152,27 @@ class ResourceLoader{
     }
 }
 
+
+
 /////////////////////////////////////////////////////////
 // Application
 ///////////////////////////////////////////////////////////
 
+/**
+ * 各アクションは関数であり、呼び出すとそのフレームで完了させるべきタスクを完了します。
+ * 自分のタスクが残っていれば true を返し、すべて完了すると false を返します。
+ */
+interface Action {
+    (): bool;
+}
 
 class Shooter{
     width: number;
     height: number;
     stage: Stage = null;
     player: PlayerUnit = null;
-    totalFrameCount: number = 0;
+    currentFrame: number = 0;
+    reservedActions: { (): void; }[] = [];
 
     constructor(private canvas: HTMLCanvasElement){
         this.width = canvas.width;
@@ -141,14 +187,322 @@ class Shooter{
     	var script = loader.loadTextFromElement(path);
     	loader.start();
     }
+
+    contains(point: Vector2, margin?: number = 0): bool{
+        var x = point.x;
+        var y = point.y;
+        return x >= -margin && x < (this.width  + margin) && 
+               y >= -margin && y < (this.height + margin);        
+    }
+
+    update(): void{
+        this.reservedActions.filter(action=>action());
+        this.stage.update();    
+        this.currentFrame += 1;
+    }
+
+
+    /// アクションコンビネータ //////////////////////////////////////////////////////////////
+
+    /**
+     * 指定したフレーム数だけ待機します。
+     */ 
+    wait(frames: number): Action {
+        var start: number;
+        return () => {
+            if(start === undefined){
+                start = this.currentFrame;
+            }
+            if(this.currentFrame >= start + frames){
+                start = undefined;
+                return false;
+            }else{
+                return true;
+            }
+        };
+    }
+
+    sequential(...actions: Action[]): Action {
+        var index = 0;
+        return () => {
+            while(index < actions.length){
+                if(actions[index]()){
+                    return true;
+                }else{
+                    index++;
+                }
+            }
+            return false;
+        };
+    }
+
+    /// 指定したアクションを繰り返します。
+    /// 渡されたアクションに一つも wait が含まれていない場合は1フレームの間に無限ループすることになってしまうので、
+    /// その場合は既定の回数以上のアクションが実行されるとエラーになります。
+    loop(...actions: Action[]): Action {
+        var index = 0;
+        return () => {
+            for(var i = 0; ; i++){
+                if(i >= 10000){
+                    throw "loop: Invalid loop action";
+                }
+                if(actions[index]()){
+                    return true;
+                }else{
+                    index = (index + 1) % actions.length;
+                }
+            }
+        };
+    }
+
+    /// 複数のアクションを並列して実行するアクションを作成します。
+    /// 弾を発射しながら移動するような場合に使用します。
+    /// すべてのアクションが完了した場合にこのアクションは完了したとみなされます。
+    concurrent(...actions: Action[]): Action {
+        return ()=>actions.some(action=>action());
+    }
+
+    // 組み込みアクション ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    // n-way 弾を発射します。
+    // origin, target に渡されたオブジェクトは複製されずにそのまま参照され続けることに注意してください。
+    // アクションが作成された瞬間の位置に対して固定して発射したい場合は、clone してから渡してください。
+    nway(n: number, d: number, origin: Vector2, target: Vector2, speed: number){
+        return ()=>{
+            var velocity = new Vector2();
+            velocity.subVectors(target, origin);
+            velocity.setLength(1);
+
+            var angle = Math.atan2(velocity.y, velocity.x);
+            for(var i = 0; i < n; i++){
+                var bullet = new LargeBullet();
+                bullet.position = origin.clone();
+                bullet.velocity = Vector2.fromAngle(angle - d * (n - 1) * 0.5 + d * i, speed);
+                this.stage.bullets.push(bullet);
+            }
+        }
+    }
 }
 
 class Stage{
-    bullets: Bullet[] = [];
+	bullets: Bullet[] = [];
     playerBullets: Bullet[] = [];
-    units: Unit[] = [];
+    units: EnemyUnit[] = [];
     effects: HitEffect[] = [];
-    constructor(public width: number, public height: number){
+    enemy: EnemyUnit = null;
+
+    stageScrollDelta: number = 0;
+    cloudScrollDelta: number = 0;
+    lowerCloudScrollDelta: number = 0;
+
+    // visual states
+    pointerAlpha: number = 0;
+	swinging: Vector2 = new Vector2(0, 0);
+	brightness: number = 1;
+    totalFrameCount: number = 0;
+
+    constructor(private shooter: Shooter){
+    }
+
+    swing(size?: number = 20, angle?: number = Math.PI * 2 * Math.random()): void{
+        this.swinging = new Vector2(size * Math.cos(angle), size * Math.sin(angle));  
+    }
+
+    isActive(): bool{
+    	return this.shooter.player.life > 0 && this.units.length > 0;
+    }
+
+    // スペルカードを起動します。
+    spell(): void{
+
+    }
+
+    update(): void{
+    	if(this.isActive()){
+
+	    	// update game states
+
+			this.bullets.forEach((bullet: Bullet)=>{
+	            bullet.update();
+	        });
+
+	        this.playerBullets.forEach((bullet: Bullet)=>{
+	            bullet.update();
+	        });
+
+	        this.units.forEach((unit: Unit)=>{
+	            unit.update();
+	        });
+
+	        this.shooter.player.update();
+
+			this.effects = this.effects.filter((effect: HitEffect)=>{
+	            effect.update();
+	            return effect.count < HitEffect.maxCount;
+	        });	                
+				
+				this.playerBullets = this.playerBullets.filter((bullet: Bullet)=>{
+	            return this.shooter.contains(bullet.position, 64);
+	        });
+
+	        this.bullets = this.bullets.filter((bullet: Bullet)=>{
+	            return this.shooter.contains(bullet.position, 64);
+	        });
+
+	        
+	        // collision detection
+
+	        if(this.shooter.player.probation === 0){
+	        	var crashed = false;
+	            this.bullets = this.bullets.filter((bullet: Bullet)=>{
+	                var delta = new Vector2(0, 0);
+	                delta.subVectors(this.shooter.player.position, bullet.position);
+	                if(delta.length() < (this.shooter.player.radius + bullet.size)){
+	                	crashed = true;    
+	                    return false;
+	                }else{
+	                    return true;
+	                }
+	            });
+	            if(crashed){
+					this.shooter.player.crash();
+	                this.shooter.stage.swing();	            	
+	            }
+	        }
+
+	        this.playerBullets = this.playerBullets.filter((bullet: Bullet)=>{
+	        	var result = true;
+	        	for(var i = 0; i < this.units.length; i++){
+	        		var unit: EnemyUnit = this.units[i];
+	                var delta = new Vector2(0, 0);
+	                delta.subVectors(unit.position, bullet.position);
+	                if(delta.length() < (unit.radius + bullet.size)){
+	                    result = false;
+	                    this.effects.push(new HitEffect(new Vector2(
+	                    	bullet.position.x - 8 + 16 * Math.random(),
+	                    	bullet.position.y - 8 * Math.random()
+	                    )));
+	                    unit.life = Math.max(0, unit.life - 1);
+	                    break;
+	                }
+	        	}
+	        	return result;
+	        });
+
+
+	        // visual effects /////////////////////////////////////////////////////////////////
+
+	        this.totalFrameCount += 1;
+	        this.brightness = Math.min(1, this.brightness + 0.02);
+
+			// swinging dumper
+			this.swinging.mul(0.95);    
+
+	        // scroll 
+	        this.stageScrollDelta += 2.0;
+	        this.stageScrollDelta = this.stageScrollDelta % stageBackgroundImage.height;    
+
+	        this.cloudScrollDelta += 22.2;
+	        this.cloudScrollDelta = this.cloudScrollDelta % stageCloudImage.height;
+
+	        this.lowerCloudScrollDelta += 8.7;    
+	        this.lowerCloudScrollDelta = this.lowerCloudScrollDelta % stageCloudImage.height;
+	    }else{
+	    	this.brightness = Math.max(0, this.brightness - 0.02);
+	    }
+    }
+
+
+    paint(graphics: CanvasRenderingContext2D): void{
+
+	    graphics.save();
+	    var swingRange = Math.sin(Math.PI * 2 * (this.totalFrameCount % 5) / 5);
+	    graphics.translate(
+	        swingRange * this.swinging.x, 
+	        swingRange * this.swinging.y
+	    );
+
+        // background
+        graphics.drawImage(stageBackgroundImage, 0, this.stageScrollDelta);
+        graphics.drawImage(stageBackgroundImage, 0, this.stageScrollDelta - stageBackgroundImage.height);
+
+        graphics.drawImage(stageCloudImage, 0, this.lowerCloudScrollDelta);
+        graphics.drawImage(stageCloudImage, 0, this.lowerCloudScrollDelta - stageCloudImage.height);
+
+        graphics.globalCompositeOperation = 'lighter';
+        graphics.drawImage(upperCloudImage, 0, this.cloudScrollDelta);
+        graphics.drawImage(upperCloudImage, 0, this.cloudScrollDelta - stageCloudImage.height);
+        graphics.globalCompositeOperation = 'source-over';
+
+        // draw enemies
+        this.units.forEach((unit: Unit)=>{
+            graphics.save();
+            graphics.translate(unit.position.x, unit.position.y);
+            unit.paint(graphics);
+            graphics.restore();
+        });
+
+        // draw player
+		graphics.save();
+        graphics.translate(this.shooter.player.position.x, this.shooter.player.position.y);
+        this.shooter.player.paint(graphics);
+        graphics.restore();
+
+        this.effects.forEach((effect: HitEffect)=>{
+        	effect.paint(graphics);
+        });
+        
+        // draw player bullets
+        this.playerBullets.forEach((bullet: Bullet)=>{
+            graphics.save();
+            graphics.translate(bullet.position.x, bullet.position.y);
+            bullet.paint(graphics);
+            graphics.restore();
+        });
+
+        // draw bullets
+        this.bullets.forEach((bullet: Bullet)=>{
+            graphics.save();
+            graphics.translate(bullet.position.x, bullet.position.y);
+            bullet.paint(graphics);
+            graphics.restore();
+        });
+
+        // draw pointer 
+        if(this.pointerAlpha > 0){
+            graphics.save();
+            graphics.translate(this.shooter.player.position.x, this.shooter.player.position.y);
+            graphics.globalAlpha = this.pointerAlpha;
+            graphics.drawImage(pointerImage, -pointerImage.width / 2, -pointerImage.height / 2);
+            graphics.restore();
+        }
+
+	    graphics.restore();
+
+		// paint HUD
+		if(this.enemy !== null){
+			graphics.fillStyle = 'rgba(0, 0, 0, 0.5)';
+			graphics.fillRect(10, 10, 480, 3);
+			graphics.fillStyle = 'rgba(255, 64, 64, 0.9)';
+			graphics.fillRect(10, 10, 480 * this.enemy.life / this.enemy.maxLife, 3);
+		}
+
+	    if(this.brightness < 1){
+	    	graphics.fillStyle = 'rgba(0, 0, 0, ' + (0.5 * (1 - this.brightness)) + ')';
+	    	graphics.fillRect(0, 0, this.shooter.width, this.shooter.height);
+	    }
+
+	    // upper HUD
+	    if(this.brightness < 1){
+		    graphics.save();
+		    graphics.globalAlpha = 1 - this.brightness;
+		    graphics.fillStyle = 'white';
+		    graphics.font = 'normal 400 48px/2 Unknown Font, sans-seri';
+		    var hudText = this.shooter.player.life > 0 ? 'Stage Cleared!' : 'Game Over...';
+		    var metrics = graphics.measureText(hudText);
+		    graphics.fillText(hudText, (this.shooter.width - metrics.width) / 2, 200);
+		    graphics.restore();
+		}
     }
 }
 
@@ -165,7 +519,6 @@ class Bullet{
     }
 }
 
-
 interface UnitImages{
     image: HTMLImageElement;
     front: HTMLImageElement;
@@ -175,30 +528,30 @@ interface UnitImages{
 }
 
 var rumiaImage: UnitImages = {
-    image: createImage('rumia.png'),
-    front: createImage('rumia_f.png'),
-    back:  createImage('rumia_b.png'),
-    left:  createImage('rumia_l.png'),
-    right: createImage('rumia_r.png')
+    image: loadImage(rumiaImagePath),
+    front: loadImage(rumiaImagePathF),
+    back:  loadImage(rumiaImagePathB),
+    left:  loadImage(rumiaImagePathL),
+    right: loadImage(rumiaImagePathR)
 };
 
 var kogasaImage: UnitImages = {
-    image: createImage('kogasa.png'),
-    front: createImage('kogasa.png'),
-    back:  createImage('kogasa.png'),
-    left:  createImage('kogasa.png'),
-    right: createImage('kogasa.png')
+    image: loadImage(kogasaImagePath),
+    front: loadImage(kogasaImagePath),
+    back:  loadImage(kogasaImagePath),
+    left:  loadImage(kogasaImagePath),
+    right: loadImage(kogasaImagePath)
 };
 
-var bulletLargeImage: HTMLImageElement = createImage("bullet_large.png");
-var dartImage: HTMLImageElement = createImage("dart.png");
-var pointerImage = createImage('pointer.png');
-var heartImage = createImage('heart.svg');
-var starImage = createImage('star.svg');
-var stageBackgroundImage = createImage('scroll.png');
-var stageCloudImage = createImage('cloud.png');
-var upperCloudImage = createImage('cloud_upper.png');
-var hitEffectImage = createImage('hiteffect.png');
+var bulletLargeImage: HTMLImageElement = loadImage(bulletLargeImagePath);
+var dartImage: HTMLImageElement = loadImage(dartImagePath);
+var pointerImage = loadImage(pointerImagePath);
+var heartImage = loadImage(heartImagePath);
+var starImage = loadImage(starImagePath);
+var stageBackgroundImage = loadImage(stageBackgroundImagePath);
+var stageCloudImage = loadImage(stageCloudImagePath);
+var upperCloudImage = loadImage(upperCloudImagePath);
+var hitEffectImage = loadImage(hitEffectImagePath);
 
 class LargeBullet extends Bullet{
     constructor(){
@@ -229,16 +582,30 @@ class DartBullet extends Bullet{
 }
 
 class Unit{
+
+    // このオブジェクトはこのユニットの位置を常に保持するオブジェクトとして、
+    // ユニットの位置を追跡するのにもつかわれています
+    // ユニットの位置を変更したい場合は、
+    //     unit.position = newPosition;
+    // というようにオブジェクトごと置き換えるのではなく、
+    //     unit.position.copy(newPosition);
+    // のように Vector2 のプロパティを書き換えるようにします。
+    //
+    // @readonly
     position: Vector2 = new Vector2(0, 0);
-    radius: number = 5;
+
+    // @readonly
     velocity: Vector2 = new Vector2(0, 0);
+
+    radius: number = 5;
+
     img: HTMLImageElement;
-    constructor(private stage: Stage, private images: UnitImages){
+    constructor(private shooter: Shooter, private images: UnitImages){
     }
 
     update(): void{
-        this.position.x = Math.max(0, Math.min(this.stage.width,  this.position.x + this.velocity.x));
-        this.position.y = Math.max(0, Math.min(this.stage.height, this.position.y + this.velocity.y));
+        this.position.x = Math.max(0, Math.min(this.shooter.width,  this.position.x + this.velocity.x));
+        this.position.y = Math.max(0, Math.min(this.shooter.height, this.position.y + this.velocity.y));
 
         this.img = this.velocity.y < 0 ? this.images.front : 
                    this.velocity.y > 0 ? this.images.back :
@@ -246,7 +613,6 @@ class Unit{
                    this.velocity.x > 0 ? this.images.right :
                    this.images.image;
         this.velocity = new Vector2(0, 0);
-
     }
     paint(g: CanvasRenderingContext2D): void{
         g.drawImage(this.img, -this.img.width / 2, -this.img.height / 2);
@@ -261,7 +627,7 @@ class EnemyUnit extends Unit{
     life: number = 1000;
 
     constructor(private shooter: Shooter){
-        super(shooter.stage, kogasaImage);
+        super(shooter, kogasaImage);
         this.radius = 30;
     }
 
@@ -283,7 +649,15 @@ class EnemyUnit extends Unit{
                 this.script.apply(undefined, args);
             }catch(e){
                 console.log(e);
+                this.script = null;
             }
+        }
+
+        if(this.life === 0){
+        	this.shooter.stage.units.splice(this.shooter.stage.units.indexOf(this), 1);
+        	if(this.shooter.stage.enemy === this){
+        		this.shooter.stage.enemy = null;
+        	}
         }
     }
 }
@@ -292,8 +666,8 @@ class PlayerUnit extends Unit{
     life: number = 6;
     bomb: number = 3;
     probation: number = 0;
-    constructor(stage: Stage){
-        super(stage, rumiaImage);
+    constructor(shooter: Shooter){
+        super(shooter, rumiaImage);
     }
     crash(): void{
         this.probation = 120;
@@ -342,6 +716,8 @@ class HitEffect{
 window.addEventListener('load', ()=>{
 
     var loader: ResourceLoader = new ResourceLoader(()=>{
+
+    	// references
         var canvas: HTMLCanvasElement = <HTMLCanvasElement> document.querySelector('#canvas');
         var graphics: CanvasRenderingContext2D = this.canvas.getContext('2d');
         
@@ -351,34 +727,25 @@ window.addEventListener('load', ()=>{
         var bulletsIndicator: HTMLSpanElement = <HTMLSpanElement> document.querySelector('#bullets');
         var fpsIndicator: HTMLSpanElement = <HTMLSpanElement> document.querySelector('#fps');
 
-        // visual states
-        var swinging: Vector2 = new Vector2(0, 0);
-        var pointerAlpha: number = 0;
-        var stageScrollDelta: number = 0;
-        var cloudScrollDelta: number = 0;
-        var lowerCloudScrollDelta: number = 0;    
-
-        function swing(size?: number = 20, angle?: number = Math.PI * 2 * Math.random()): void{
-            swinging = new Vector2(size * Math.cos(angle), size * Math.sin(angle));
-        }        
+    
 
         // game object initialization
-        var stage: Stage = new Stage(canvas.width, canvas.height);
         var shooter: Shooter = new Shooter(canvas);
+
+        var stage: Stage = new Stage(shooter);
         shooter.stage = stage;
 
-        var rumia: PlayerUnit = new PlayerUnit(stage);
-        rumia.position.x = canvas.width / 2;
-        rumia.position.y = canvas.height - 150;
-        shooter.player = rumia;
+        var player: PlayerUnit = new PlayerUnit(shooter);
+        player.position.x = canvas.width / 2;
+        player.position.y = canvas.height - 150;
+        shooter.player = player;
 
         var enemy: EnemyUnit = new EnemyUnit(shooter);
         enemy.position.x = shooter.width / 2;
         enemy.position.y = shooter.height / 2 - 160;
         enemy.setScript(bulletScript());
         stage.units.push(enemy);
-
-        
+        shooter.stage.enemy = enemy;
 
         // event handling
 
@@ -386,7 +753,7 @@ window.addEventListener('load', ()=>{
 
         window.addEventListener('keydown', (e: KeyboardEvent)=>{
             if(keyTable[e.keyCode] === undefined){
-                keyTable[e.keyCode] = shooter.totalFrameCount;
+                keyTable[e.keyCode] = shooter.stage.totalFrameCount;
             }
             if( ! editing){
             	e.preventDefault();
@@ -401,14 +768,7 @@ window.addEventListener('load', ()=>{
         });    
 
         function getKey(keyCode: number): number{
-            return keyTable[keyCode] !== undefined ? (keyTable[keyCode] - shooter.totalFrameCount) : null;
-        }
-
-        function contains(point: Vector2, margin?: number = 0): bool{
-            var x = point.x;
-            var y = point.y;
-            return x >= -margin && x < (canvas.width  + margin) && 
-                   y >= -margin && y < (canvas.height + margin);        
+            return keyTable[keyCode] !== undefined ? (keyTable[keyCode] - shooter.stage.totalFrameCount) : null;
         }
 
         // editor event handling
@@ -437,38 +797,43 @@ window.addEventListener('load', ()=>{
         	()=>{
 	        	var a = <HTMLAElement> samples[i];
 	        	a.addEventListener('click', (e: MouseEvent)=>{
-	        		shooter.loadScript(a.href, (script: string)=>{
-	        			var textarea = <HTMLTextareaElement> document.getElementById('textarea');
-	        			textarea.value = script;
-	        		});        		
+
+	        		var elem = document.getElementById(a.getAttribute('data-href'));
+	        		var textarea = <HTMLTextareaElement> document.getElementById('textarea');
+	        		textarea.value = elem.textContent;
+
+	        		//shooter.loadScript(a.href, (script: string)=>{
+	        		//	var textarea = <HTMLTextareaElement> document.getElementById('textarea');
+	        		//	textarea.value = script;
+	        		//});        		
+	        		
 	        		e.preventDefault();
 	        	});
 	        }();
         }
 
         // game loop ///////////////////////////////////////////////////////////////
+		var requestAnimationFrame = window['requestAnimationFrame'] || 
+                                    window['mozRequestAnimationFrame'];
 
         function updateFrame(): void{
-            var requestAnimationFrame = window['requestAnimationFrame'] || 
-                                        window['mozRequestAnimationFrame'];
-
-            requestAnimationFrame(()=>{
-                
+            requestAnimationFrame(()=>{                
                 if(editing === false){
-                	// update //////////////////////////////////////////////////////////////////////////
+                	// process inputs ///////////////////////////////////////////////////////////
+
+                	// preprocess
+	                
+	                shooter.player.velocity.x = 0;
+	                shooter.player.velocity.y = 0;
 
 	                // key 
 	                if(getKey(32)){ // space key
-	                    swing();
+	                    shooter.swing();
 	                }
 
-	                
 	                var accurate = getKey(16) !== null;
 	                var speed = accurate ? 1 : 3;
-	                pointerAlpha = Math.max(0, Math.min(1, pointerAlpha + 0.1 * (accurate ? 1 : -1)));
-
-	                shooter.player.velocity.x = 0;
-	                shooter.player.velocity.y = 0;
+	                shooter.stage.pointerAlpha = Math.max(0, Math.min(1, shooter.stage.pointerAlpha + 0.1 * (accurate ? 1 : -1)));
 
 	                if(getKey(37)){
 	                    shooter.player.velocity.x -= speed;
@@ -493,78 +858,17 @@ window.addEventListener('load', ()=>{
 		                }
 	                }
 
-	                // update
+                	// update //////////////////////////////////////////////////////////////////////////
+	                shooter.update();
 
-	                //scriptFunction.apply(undefined, [shooter]);
+	                // paint　///////////////////////////////////////////////////////////////////////////
+	                shooter.stage.paint(graphics);
 
-	                stage.bullets.forEach((bullet: Bullet)=>{
-	                    bullet.update();
-	                });
 
-	                stage.playerBullets.forEach((bullet: Bullet)=>{
-	                    bullet.update();
-	                });
 
-	                stage.units.forEach((unit: Unit)=>{
-	                    unit.update();
-	                });
+	                // update side bar //////////////////////////////////////////////////////
 
-	                shooter.player.update();
-
-					stage.effects = stage.effects.filter((effect: HitEffect)=>{
-	                    effect.update();
-	                    return effect.count < HitEffect.maxCount;
-	                });	                
- 					
- 					stage.playerBullets = stage.playerBullets.filter((bullet: Bullet)=>{
-	                    return contains(bullet.position, 64);
-	                });
-
-	                stage.bullets = stage.bullets.filter((bullet: Bullet)=>{
-	                    return contains(bullet.position, 64);
-	                });
-
-	                bulletsIndicator.innerText = stage.bullets.length.toString();
-	                bulletsIndicator.textContent = bulletsIndicator.innerText;
-
-	                // collision detection
-
-	                if(shooter.player.probation === 0){
-	                    stage.bullets = stage.bullets.filter((bullet: Bullet)=>{
-	                        var delta = new Vector2(0, 0);
-	                        delta.subVectors(shooter.player.position, bullet.position);
-	                        if(delta.length() < (shooter.player.radius + bullet.size)){
-	                            shooter.player.crash();
-	                            swing();
-	                            return false;
-	                        }else{
-	                            return true;
-	                        }
-	                    });
-	                }
-
-	                stage.playerBullets = stage.playerBullets.filter((bullet: Bullet)=>{
-	                	var result = true;
-	                	for(var i = 0; i < stage.units.length; i++){
-	                		var unit: EnemyUnit = stage.units[i];
-	                        var delta = new Vector2(0, 0);
-	                        delta.subVectors(unit.position, bullet.position);
-	                        if(delta.length() < (unit.radius + bullet.size)){
-	                            result = false;
-	                            stage.effects.push(new HitEffect(new Vector2(
-	                            	bullet.position.x - 8 + 16 * Math.random(),
-	                            	bullet.position.y - 8 * Math.random()
-	                            )));
-	                            unit.life = Math.max(0, unit.life - 1);
-	                            break;
-	                        }
-	                	}
-	                	return result;
-                    });
-
-	                // dumper
-
-	                swinging.mul(0.95);
+					bulletsIndicator.textContent = stage.bullets.length.toString();
 
 	                // heart
 	                var lifeGauge = <HTMLSpanElement> document.querySelector('#life');
@@ -575,7 +879,7 @@ window.addEventListener('load', ()=>{
 	                    }
 	                    // add images
 	                    for(var i = 0; i < shooter.player.life; i++){
-	                        lifeGauge.appendChild(createImage('heart.svg'));
+	                        lifeGauge.appendChild(loadImage('heart.svg'));
 	                    }
 	                }
 
@@ -588,115 +892,35 @@ window.addEventListener('load', ()=>{
 	                    }
 	                    // add images
 	                    for(var i = 0; i < shooter.player.bomb; i++){
-	                        bombGauge.appendChild(createImage('star.svg'));
+	                        bombGauge.appendChild(loadImage('star.svg'));
 	                    }
 	                }
-
-	                // scroll 
-	                stageScrollDelta += 2.0;
-	                stageScrollDelta = stageScrollDelta % stageBackgroundImage.height;    
-
-	                cloudScrollDelta += 22.2;
-	                cloudScrollDelta = cloudScrollDelta % stageCloudImage.height;
-
-	                lowerCloudScrollDelta += 8.7;    
-	                lowerCloudScrollDelta = lowerCloudScrollDelta % stageCloudImage.height;
-
-	                // paint　///////////////////////////////////////////////////////////////////////////
-
-	                graphics.save();
-	                var swingRange = Math.sin(Math.PI * 2 * (shooter.totalFrameCount % 5) / 5);
-	                graphics.translate(
-	                    swingRange * swinging.x, 
-	                    swingRange * swinging.y
-	                );
-
-	                // background
-	                graphics.drawImage(stageBackgroundImage, 0, stageScrollDelta);
-	                graphics.drawImage(stageBackgroundImage, 0, stageScrollDelta - stageBackgroundImage.height);
-
-	                graphics.drawImage(stageCloudImage, 0, lowerCloudScrollDelta);
-	                graphics.drawImage(stageCloudImage, 0, lowerCloudScrollDelta - stageCloudImage.height);
-
-	                graphics.globalCompositeOperation = 'lighter';
-	                graphics.drawImage(upperCloudImage, 0, cloudScrollDelta);
-	                graphics.drawImage(upperCloudImage, 0, cloudScrollDelta - stageCloudImage.height);
-	                graphics.globalCompositeOperation = 'source-over';
-
-	                // draw enemies
-	                stage.units.forEach((unit: Unit)=>{
-	                    graphics.save();
-	                    graphics.translate(unit.position.x, unit.position.y);
-	                    unit.paint(graphics);
-	                    graphics.restore();
-	                });
-
-	                // draw player
-					graphics.save();
-                    graphics.translate(shooter.player.position.x, shooter.player.position.y);
-                    shooter.player.paint(graphics);
-                    graphics.restore();
-
-                    stage.effects.forEach((effect: HitEffect)=>{
-                    	effect.paint(graphics);
-                    });
-	                
-	                // draw player bullets
-	                stage.playerBullets.forEach((bullet: Bullet)=>{
-	                    graphics.save();
-	                    graphics.translate(bullet.position.x, bullet.position.y);
-	                    bullet.paint(graphics);
-	                    graphics.restore();
-	                });
-
-	                // draw bullets
-	                stage.bullets.forEach((bullet: Bullet)=>{
-	                    graphics.save();
-	                    graphics.translate(bullet.position.x, bullet.position.y);
-	                    bullet.paint(graphics);
-	                    graphics.restore();
-	                });
-
-	                // draw pointer 
-	                if(pointerAlpha > 0){
-	                    graphics.save();
-	                    graphics.translate(shooter.player.position.x, shooter.player.position.y);
-	                    graphics.globalAlpha = pointerAlpha;
-	                    graphics.drawImage(pointerImage, -pointerImage.width / 2, -pointerImage.height / 2);
-	                    graphics.restore();
-	                }
-
-
-	                graphics.restore();
-
-	                // HUD //////////////////////////////////////////////////////////////
-
-	                graphics.fillStyle = 'rgba(0, 0, 0, 0.5)';
-	            	graphics.fillRect(10, 10, 480, 10);
-					graphics.fillStyle = 'rgba(255, 255, 255, 0.9)';
-	            	graphics.fillRect(10, 10, 480 * enemy.life / enemy.maxLife, 10);
 
 	                // fps count /////////////////////////////////////////////////////////////
 	                frameCount += 1;
 	                var now = performance.now();
-	                var delta = now - fpsCountStart;
-	                if(delta >= 1000){
-	                    fpsIndicator.innerText = (frameCount * 1000 / delta).toFixed(2);
-	                    fpsIndicator.textContent = fpsIndicator.innerText;
+	                var deltaTime = now - fpsCountStart;
+	                if(deltaTime >= 1000){
+	                    fpsIndicator.textContent = (frameCount * 1000 / deltaTime).toFixed(2);
 	                    frameCount = 0;
 	                    fpsCountStart = now;
 	                }
 	            }
 
                 // request next frame ////////////////////////////////////////////////////////////
-                shooter.totalFrameCount += 1;
                 updateFrame();    
             });
         }
 
+        // start game loop
         updateFrame();
     });
     //var bulletScript: () => string = loader.loadText('bullets/nway.js');
-    var bulletScript: () => string = loader.loadTextFromElement('script_nway');
+    //var bulletScript: () => string = loader.loadTextFromElement('script_nway');
+    //var bulletScript: () => string = loader.loadTextFromElement('script_random');
+    //var bulletScript = loader.jsonp("http://phyzkit.net/bullet.cgi?name=random&callback=?", json=> json.script.replace('\\n', '\n'));
+ 
+    var bulletScript: () => string = loader.loadTextFromElement('script_combination');
+
     loader.start();
 });

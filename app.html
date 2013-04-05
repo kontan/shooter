@@ -1,10 +1,12 @@
-
+<!DOCTYPE html>
 <html>
-	<head>
-		<link rel="stylesheet" href="app.css" />
-		<script type="text/javascript" src="app.js"></script>
+    <head>
+    	<meta charset="UTF-8">
+        <link rel="stylesheet" href="app.css" />
+        <script type="text/javascript" src="jquery-1.9.1.js"></script>
+        <script type="text/javascript" src="app.js"></script>
 
-		<script id="script_random" type="text/bulletscript">
+        <script id="script_random" type="text/bulletscript">
 // random.js
 
 'use strict';
@@ -13,21 +15,18 @@ function fire(){
     var angle = Math.PI * 2 * Math.random();
     var speed = 0.5 + Math.random() * 2; 
     var bullet = new LargeBullet();
-    bullet.position.x = unit.position.x;
-    bullet.position.y = unit.position.y;
-    bullet.velocity.x = speed * Math.cos(angle);
-    bullet.velocity.y = speed * Math.sin(angle);
-    shooter.stage.bullets.push(bullet);	
+    var velocity = Vector2.fromAngle(angle, speed);
+    bullet.velocity = velocity.clone();
+    bullet.position = unit.position.clone().add(velocity.setLength(50));
+    shooter.stage.bullets.push(bullet);    
 }
-
-
 
 for(var i = 0; i < 4 && shooter.stage.bullets.length < 500; i++){
     fire();
 }
-		</script>
+        </script>
 
-		<script id="script_nway" type="text/bulletscript">
+        <script id="script_nway" type="text/bulletscript">
 // nway.js
 
 'use strict';
@@ -45,44 +44,78 @@ function nway(n, d, target){
 
     var angle = Math.atan2(velocity.y, velocity.x);
     for(var i = 0; i < n && shooter.stage.bullets.length < MaxBullets; i++){
-	    var bullet = new LargeBullet();
-	    bullet.position = unit.position.clone();
-	    bullet.velocity = Vector2.fromAngle(angle - d * (n - 1) * 0.5 + d * i, BulletSpeed);
-	    shooter.stage.bullets.push(bullet);
-	}
+        var bullet = new LargeBullet();
+        bullet.position = unit.position.clone();
+        bullet.velocity = Vector2.fromAngle(angle - d * (n - 1) * 0.5 + d * i, BulletSpeed);
+        shooter.stage.bullets.push(bullet);
+    }
 }
 
-if(shooter.totalFrameCount % Frequency === 0){
+if(shooter.currentFrame % Frequency === 0){
     nway(Ways, Varying, shooter.player.position);
 }
-		</script>
+        </script>
 
-	</head>
-	<body>
-		<div id="container">
-			<img id="backgound" src="background.png" />
-			<canvas id="canvas" width="500" height="560"></canvas>
-			<div id="sidebar">
-				<div><span class="label">LIFE</span><span id="life"></span></div>
-				<div><span class="label">BOMB</span><span id="bomb"></span></div>
-				<div>Bullets: <span id="bullets"></span></div>
-				<div>FPS: <span id="fps"></span></div>
-				<div><input id="edit" type="button" value="スクリプトの編集"></div>
-			</div>
-			<div id="editor">
-				<textarea id="textarea"　wrap="off"></textarea>
-				<div id="samples">
-					Sample: 
 
-					<!-- <a href="bullets/random.js">Random</a> -->
-					<!-- <a href="bullets/nway.js">N-Way</a> -->
 
-					<a href="script_random">Random</a> 
-					<a href="script_nway">N-Way</a>
-				</div>
-				<input id="edit_ok" type="button" value="OK" />
-				<input id="edit_cancel" type="button" value="Cancel" />
-			</div>
-		</div>
-	</body>
+        <script id="script_combination" type="text/bulletscript">// nway.js
+'use strict';
+
+var MaxBullets = 200;
+var Frequency = 60;
+var Ways = 8;
+var Varying = 0.2;
+var BulletSpeed = 2.0;
+
+function nway(n){
+    return shooter.nway(n, Varying, unit.position, shooter.player.position, BulletSpeed);
+}
+
+// アクションの初期化。
+// スクリプト内で定義されるローカル変数は１フレームだけで保存されるので、
+// 次のフレームでアクセスしたい場合は state というオブジェクトのプロパティに保存しておく。
+// state はスクリプトが切り替えられる度に破棄されます
+if(state.action === undefined){
+    state.action = shooter.loop(
+        nway(3),
+        shooter.wait(30),
+        nway(4),
+        shooter.wait(30)
+    );
+}
+
+// アクションを実行します。
+// このフレームで為すべきアクションだけ実行します。
+// アクションが完了した場合は false を返しますが、loop で作成したアクションなので常に true を返します。
+state.action();
+
+        </script>
+    </head>
+    <body>
+        <div id="container">
+            <img id="backgound" src="background.png" />
+            <canvas id="canvas" width="500" height="560"></canvas>
+            <div id="sidebar">
+                <div><span class="label">LIFE</span><span id="life"></span></div>
+                <div><span class="label">BOMB</span><span id="bomb"></span></div>
+                <div>Bullets: <span id="bullets"></span></div>
+                <div>FPS: <span id="fps"></span></div>
+                <div><input id="edit" type="button" value="スクリプトの編集"></div>
+            </div>
+            <div id="editor">
+                <textarea id="textarea"　wrap="off"></textarea>
+                <div id="samples">
+                    Sample: 
+
+                    <!-- <a href="bullets/random.js">Random</a> -->
+                    <!-- <a href="bullets/nway.js">N-Way</a> -->
+
+                    <a data-href="script_random" href="hoge">Random</a> 
+                    <a data-href="script_nway" href="hoge">N-Way</a>
+                </div>
+                <input id="edit_ok" type="button" value="OK" />
+                <input id="edit_cancel" type="button" value="Cancel" />
+            </div>
+        </div>
+    </body>
 </html>

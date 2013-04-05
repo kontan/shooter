@@ -13,8 +13,6 @@ function fire(){
     shooter.stage.bullets.push(bullet);	
 }
 
-
-
 for(var i = 0; i < 4 && shooter.stage.bullets.length < 500; i++){
     fire();
 }
