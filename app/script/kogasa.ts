@@ -9,7 +9,7 @@ var BulletSpeed = 2.0;
 // @param n 一度に発射される弾丸の個数
 // @param d 弾丸が分散する角度
 // @param target 弾丸の狙う位置
-function nway(n, d, target){
+function nway(n, d, position, target){
     // 弾丸を発射する角度を求めます。
     // そのために、発射位置からターゲットの位置への方向ベクトルを求めます。
     var v = new Vector2();
@@ -17,7 +17,7 @@ function nway(n, d, target){
     // unit はこのスクリプトが設定されている敵キャラクターです。
     // その位置からターゲットの位置を減算すると、発射の方向へのベクトルになります。
     // v.subVectors(u, t) は v = u - t の意味です。
-    v.subVectors(target, unit.position);
+    v.subVectors(target, position);
 
     // 方向ベクトル v がわかれば、v.getAngle() で角度 を求めることができます。
     var angle = v.getAngle();
@@ -30,7 +30,7 @@ function nway(n, d, target){
         var bullet = new LargeBullet();
 
         // 弾丸の初期位置をこの敵キャラクターと同じにしています
-        bullet.position = unit.position.clone();
+        bullet.position = position.clone();
 
         // angle が n-way 弾全体の発射方向です。
         // d はn-way 弾のとなりあう弾丸の角度で、それが n 個発射されるので、
@@ -48,16 +48,32 @@ function nway(n, d, target){
     }
 }
 
-// exports.update は毎フレーム呼び出される関数を設定します。
-exports.update = function(){
+function newEnemy(){
+    var now = 0;
 
-    // unit はこのスクリプトが設定されている敵キャラクターです。
-    // unit.position.x を変更すると、そのキャラクターの x 座標を変更することができます。
-    unit.position.x = shooter.width / 2 + 100 * Math.cos(shooter.now * 0.01);
+    var enemy = shooter.newEnemy();
+    enemy.position.x = shooter.width / 2;
+    enemy.position.y = shooter.height / 2 - 160;
+    enemy.updateUnit = function(){
+        
+        // unit はこのスクリプトが設定されている敵キャラクターです。
+        // unit.position.x を変更すると、そのキャラクターの x 座標を変更することができます。
+        enemy.position.x = shooter.width / 2 + 100 * Math.sin(now++ * 0.01);
 
-    // shooter.now はゲームを開始してから経過したフレーム数を number で返します。
-    // ここの条件式では、Frequency フレームに一度弾が発射されるようになっています。 
-    if(shooter.now % Frequency === 0){
-        nway(Ways, Varying, shooter.player.position);
-    }
+        // shooter.now はゲームを開始してから経過したフレーム数を number で返します。
+        // ここの条件式では、Frequency フレームに一度弾が発射されるようになっています。 
+        if(shooter.now % Frequency === 0){
+            nway(Ways, Varying, enemy.position, shooter.player.position);
+        }
+    };
+
+    shooter.stage.units.push(enemy);
+}
+
+newEnemy();
+
+exports.update = function(){ 
+    //if(shooter.now % 100 === 0){
+    //    newEnemy();
+    //}
 };

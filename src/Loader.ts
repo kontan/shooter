@@ -9,8 +9,9 @@ module BulletStorm {
     export class ResourceLoader{
         private resourceCount: number = 0;
         private loaders: { (): void; }[] = [];
+        private onComplete: ()=>void;
 
-        constructor(private onComplete: ()=>void){
+        constructor(){
         }
 
         private loaded(){
@@ -64,13 +65,15 @@ module BulletStorm {
             return ()=>mapping ? mapping(json) : json;
         }
 
-        start(): void{
+        start(onComplete: ()=>void): void{
         	if(this.loaders.length > 0){
+                this.onComplete = onComplete;
         		this.resourceCount = this.loaders.length;
     	        this.loaders.forEach((loader)=>loader());
     	        this.loaders = [];
             }else{
-            	this.onComplete();
+            	onComplete();
+                onComplete = null;
             }
         }
     }

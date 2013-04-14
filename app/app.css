@@ -1,6 +1,9 @@
-body{
+html, body{
 	background-color: black;
 	margin: 0px;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
 }
 
 #container{
@@ -8,6 +11,9 @@ body{
 	height: 600px;
 	position: absolute;
 	background-color: white;
+
+	left: calc(50% - 400px);
+	top:  calc(50% - 300px);
 }
 
 #canvas{

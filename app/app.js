@@ -138,6 +138,13 @@ var BulletStorm;
             if (typeof length === "undefined") { length = 1; }
             return new Vector2(length * Math.cos(angle), length * Math.sin(angle));
         };
+        Vector2.prototype.set = function (x, y) {
+            if (typeof x === "undefined") { x = 0; }
+            if (typeof y === "undefined") { y = 0; }
+            this.x = x;
+            this.y = y;
+            return this;
+        };
         Vector2.prototype.copy = function (v) {
             this.x = v.x;
             this.y = v.y;
@@ -195,8 +202,7 @@ var BulletStorm;
     }
     BulletStorm.loadImage = loadImage;
     var ResourceLoader = (function () {
-        function ResourceLoader(onComplete) {
-            this.onComplete = onComplete;
+        function ResourceLoader() {
             this.resourceCount = 0;
             this.loaders = [];
         }
@@ -255,15 +261,17 @@ var BulletStorm;
                 return mapping ? mapping(json) : json;
             };
         };
-        ResourceLoader.prototype.start = function () {
+        ResourceLoader.prototype.start = function (onComplete) {
             if(this.loaders.length > 0) {
+                this.onComplete = onComplete;
                 this.resourceCount = this.loaders.length;
                 this.loaders.forEach(function (loader) {
                     return loader();
                 });
                 this.loaders = [];
             } else {
-                this.onComplete();
+                onComplete();
+                onComplete = null;
             }
         };
         return ResourceLoader;
@@ -299,14 +307,13 @@ var BulletStorm;
 var BulletStorm;
 (function (BulletStorm) {
     var Bullet = (function () {
-        function Bullet(size) {
-            this.size = size;
+        function Bullet() {
             this.position = new BulletStorm.Vector2(0, 0);
             this.velocity = new BulletStorm.Vector2(0, 0);
             this.angle = 0;
+            this.size = 0;
         }
         Bullet.prototype.update = function () {
-            this.position.add(this.velocity);
         };
         Bullet.prototype.paint = function (g) {
         };
@@ -318,8 +325,7 @@ var BulletStorm;
 var BulletStorm;
 (function (BulletStorm) {
     var Unit = (function () {
-        function Unit(shooter, images) {
-            this.shooter = shooter;
+        function Unit(images) {
             this.images = images;
             this.position = new BulletStorm.Vector2(0, 0);
             this.velocity = new BulletStorm.Vector2(0, 0);
@@ -327,10 +333,7 @@ var BulletStorm;
             this.img = undefined;
         }
         Unit.prototype.update = function () {
-            this.position.x = Math.max(0, Math.min(this.shooter.width, this.position.x + this.velocity.x));
-            this.position.y = Math.max(0, Math.min(this.shooter.height, this.position.y + this.velocity.y));
             this.img = this.velocity.y < 0 ? this.images.front : this.velocity.y > 0 ? this.images.back : this.velocity.x < 0 ? this.images.left : this.velocity.x > 0 ? this.images.right : this.images.image;
-            this.velocity = new BulletStorm.Vector2(0, 0);
         };
         Unit.prototype.paint = function (g) {
             g.drawImage(this.img, -this.img.width / 2, -this.img.height / 2);
@@ -420,12 +423,6 @@ var __extends = this.__extends || function (d, b) {
 var BulletStorm;
 (function (BulletStorm) {
     BulletStorm.origin = "res/";
-    var rumiaImagePath = BulletStorm.origin + 'rumia.png';
-    var rumiaImagePathF = BulletStorm.origin + 'rumia_f.png';
-    var rumiaImagePathB = BulletStorm.origin + 'rumia_b.png';
-    var rumiaImagePathL = BulletStorm.origin + 'rumia_l.png';
-    var rumiaImagePathR = BulletStorm.origin + 'rumia_r.png';
-    var kogasaImagePath = BulletStorm.origin + 'kogasa.png';
     var bulletLargeImagePath = BulletStorm.origin + 'bullet_large.png';
     var dartImagePath = BulletStorm.origin + 'dart.png';
     var pointerImagePath = BulletStorm.origin + 'pointer.png';
@@ -444,26 +441,30 @@ var BulletStorm;
     var stageCloudImage = BulletStorm.loadImage(stageCloudImagePath);
     var upperCloudImage = BulletStorm.loadImage(upperCloudImagePath);
     var hitEffectImage = BulletStorm.loadImage(hitEffectImagePath);
-    var rumiaImage = {
-        image: BulletStorm.loadImage(rumiaImagePath),
-        front: BulletStorm.loadImage(rumiaImagePathF),
-        back: BulletStorm.loadImage(rumiaImagePathB),
-        left: BulletStorm.loadImage(rumiaImagePathL),
-        right: BulletStorm.loadImage(rumiaImagePathR)
-    };
-    var kogasaImage = {
-        image: BulletStorm.loadImage(kogasaImagePath),
-        front: BulletStorm.loadImage(kogasaImagePath),
-        back: BulletStorm.loadImage(kogasaImagePath),
-        left: BulletStorm.loadImage(kogasaImagePath),
-        right: BulletStorm.loadImage(kogasaImagePath)
-    };
+    function loadDirectionalImages(prefix) {
+        return {
+            image: BulletStorm.loadImage(prefix + '.png'),
+            front: BulletStorm.loadImage(prefix + '_f.png'),
+            back: BulletStorm.loadImage(prefix + '_b.png'),
+            left: BulletStorm.loadImage(prefix + '_l.png'),
+            right: BulletStorm.loadImage(prefix + '_r.png')
+        };
+    }
+    var rumiaImage = loadDirectionalImages('res/rumia');
+    var kogasaImage = loadDirectionalImages('res/kogasa');
+    function construct(constructor, args) {
+        function F() {
+            return constructor.apply(this, args);
+        }
+        F.prototype = constructor.prototype;
+        return new F();
+    }
     var Shooter = (function () {
         function Shooter(canvas) {
             this.canvas = canvas;
             this.stage = null;
             this.player = null;
-            this.currentFrame = 0;
+            this.now = 0;
             this.reservedActions = [];
             this._width = canvas.width;
             this._height = canvas.height;
@@ -484,11 +485,11 @@ var BulletStorm;
             configurable: true
         });
         Shooter.prototype.loadScript = function (path, onLoad) {
-            var loader = new BulletStorm.ResourceLoader(function () {
+            var loader = new BulletStorm.ResourceLoader();
+            var script = loader.loadText(path);
+            loader.start(function () {
                 onLoad(script());
             });
-            var script = loader.loadText(path);
-            loader.start();
         };
         Shooter.prototype.contains = function (point, margin) {
             if (typeof margin === "undefined") { margin = 0; }
@@ -501,7 +502,7 @@ var BulletStorm;
                 return action();
             });
             this.stage.update();
-            this.currentFrame += 1;
+            this.now += 1;
         };
         Object.defineProperty(Shooter.prototype, "wait", {
             get: function () {
@@ -546,6 +547,9 @@ var BulletStorm;
                 }
             };
         };
+        Shooter.prototype.newEnemy = function () {
+            return new EnemyUnit(this);
+        };
         return Shooter;
     })();
     BulletStorm.Shooter = Shooter;    
@@ -557,7 +561,6 @@ var BulletStorm;
             this.playerBullets = [];
             this.units = [];
             this.effects = [];
-            this.enemy = null;
             this.stageScrollDelta = 0;
             this.cloudScrollDelta = 0;
             this.lowerCloudScrollDelta = 0;
@@ -565,8 +568,35 @@ var BulletStorm;
             this.swinging = new BulletStorm.Vector2(0, 0);
             this.brightness = 1;
             this.totalFrameCount = 0;
+            this.scriptText = null;
+            this.scriptScope = null;
             Object.seal(this);
         }
+        Stage.prototype.loadScript = function (scriptPath, onLoad) {
+            var _this = this;
+            $.get(scriptPath, function (data) {
+                _this.setScript(data);
+                onLoad();
+            });
+        };
+        Stage.prototype.setScript = function (scriptText) {
+            try  {
+                this.scriptText = scriptText;
+                this.scriptScope = {
+                    'shooter': this.shooter,
+                    'exports': {
+                    },
+                    'Vector2': BulletStorm.Vector2,
+                    'LargeBullet': LargeBullet
+                };
+                var env = chainchomp.pick();
+                var scriptFunc = env(scriptText, this.scriptScope);
+                scriptFunc();
+            } catch (e) {
+                console.log(e.message);
+                console.log(scriptText);
+            }
+        };
         Stage.prototype.swing = function (size, angle) {
             if (typeof size === "undefined") { size = 20; }
             if (typeof angle === "undefined") { angle = Math.PI * 2 * Math.random(); }
@@ -580,16 +610,31 @@ var BulletStorm;
         Stage.prototype.update = function () {
             var _this = this;
             if(this.isActive()) {
+                if(this.scriptScope && this.scriptScope.exports.update) {
+                    this.scriptScope.exports.update();
+                }
                 this.bullets.forEach(function (bullet) {
                     bullet.update();
+                    bullet.position.add(bullet.velocity);
                 });
                 this.playerBullets.forEach(function (bullet) {
                     bullet.update();
+                    bullet.position.add(bullet.velocity);
                 });
+                var updateUnit = function (unit) {
+                    if(unit.update) {
+                        unit.update();
+                    }
+                    unit.position.x = Math.max(0, Math.min(_this.shooter.width, unit.position.x + unit.velocity.x));
+                    unit.position.y = Math.max(0, Math.min(_this.shooter.height, unit.position.y + unit.velocity.y));
+                    unit.velocity.set(0, 0);
+                };
                 this.units.forEach(function (unit) {
-                    unit.update();
+                    updateUnit(unit);
                 });
-                this.shooter.player.update();
+                if(this.shooter.player.update) {
+                    updateUnit(this.shooter.player);
+                }
                 this.effects = this.effects.filter(function (effect) {
                     effect.update();
                     return effect.count < BulletStorm.HitEffect.maxCount;
@@ -605,7 +650,7 @@ var BulletStorm;
                     this.bullets = this.bullets.filter(function (bullet) {
                         var delta = new BulletStorm.Vector2(0, 0);
                         delta.subVectors(_this.shooter.player.position, bullet.position);
-                        if(delta.length() < (_this.shooter.player.radius + bullet.size)) {
+                        if(delta.length() < ((_this.shooter.player.radius || 0) + bullet.size)) {
                             crashed = true;
                             return false;
                         } else {
@@ -623,7 +668,7 @@ var BulletStorm;
                         var unit = _this.units[i];
                         var delta = new BulletStorm.Vector2(0, 0);
                         delta.subVectors(unit.position, bullet.position);
-                        if(delta.length() < (unit.radius + bullet.size)) {
+                        if(delta.length() < ((unit.radius || 0) + bullet.size)) {
                             result = false;
                             _this.effects.push(new BulletStorm.HitEffect(new BulletStorm.Vector2(bullet.position.x - 8 + 16 * Math.random(), bullet.position.y - 8 * Math.random()), 0, hitEffectImage));
                             unit.life = Math.max(0, unit.life - 1);
@@ -690,11 +735,12 @@ var BulletStorm;
                 graphics.restore();
             }
             graphics.restore();
-            if(this.enemy !== null) {
+            if(this.units.length > 0) {
+                var enemy = this.units[0];
                 graphics.fillStyle = 'rgba(0, 0, 0, 0.5)';
                 graphics.fillRect(10, 10, 480, 3);
                 graphics.fillStyle = 'rgba(255, 64, 64, 0.9)';
-                graphics.fillRect(10, 10, 480 * this.enemy.life / this.enemy.maxLife, 3);
+                graphics.fillRect(10, 10, 480 * enemy.life / enemy.maxLife, 3);
             }
             if(this.brightness < 1) {
                 graphics.fillStyle = 'rgba(0, 0, 0, ' + (0.5 * (1 - this.brightness)) + ')';
@@ -717,7 +763,8 @@ var BulletStorm;
     var LargeBullet = (function (_super) {
         __extends(LargeBullet, _super);
         function LargeBullet() {
-                _super.call(this, 4);
+                _super.call(this);
+            this.size = 4;
             Object.seal(this);
         }
         LargeBullet.prototype.paint = function (g) {
@@ -731,7 +778,8 @@ var BulletStorm;
     var DartBullet = (function (_super) {
         __extends(DartBullet, _super);
         function DartBullet() {
-                _super.call(this, 4);
+                _super.call(this);
+            this.size = 4;
             Object.seal(this);
         }
         DartBullet.prototype.paint = function (g) {
@@ -744,67 +792,21 @@ var BulletStorm;
     var EnemyUnit = (function (_super) {
         __extends(EnemyUnit, _super);
         function EnemyUnit(shooter) {
-                _super.call(this, shooter, kogasaImage);
+                _super.call(this, kogasaImage);
             this.shooter = shooter;
-            this.scriptText = null;
-            this.scriptState = {
-            };
             this.maxLife = 1000;
             this.life = 1000;
-            this.exposed = undefined;
-            this.scriptFunc = undefined;
+            this.updateUnit = null;
             this.radius = 30;
-            this.exposed = {
-                'shooter': this.shooter,
-                'unit': this,
-                'state': this.scriptState,
-                'Vector2': BulletStorm.Vector2,
-                'LargeBullet': LargeBullet
-            };
             Object.seal(this);
         }
-        EnemyUnit.prototype.setScript = function (scriptText) {
-            function construct(constructor, args) {
-                function F() {
-                    return constructor.apply(this, args);
-                }
-                F.prototype = constructor.prototype;
-                return new F();
-            }
-            try  {
-                this.scriptText = scriptText;
-                this.scriptState = {
-                };
-                var env = chainchomp.pick();
-                this.scriptFunc = env(scriptText, this.exposed);
-            } catch (e) {
-                console.log(e.message);
-                console.log(scriptText);
-                this.scriptFunc = null;
-            }
-        };
         EnemyUnit.prototype.update = function () {
             _super.prototype.update.call(this);
-            if(this.scriptFunc !== null) {
-                var args = [
-                    this.shooter, 
-                    this, 
-                    this.scriptState, 
-                    BulletStorm.Vector2, 
-                    LargeBullet
-                ];
-                try  {
-                    this.scriptFunc();
-                } catch (e) {
-                    console.log('Script Runtime Error: ' + e.message);
-                    this.scriptFunc = null;
-                }
+            if(this.updateUnit) {
+                this.updateUnit();
             }
             if(this.life === 0) {
                 this.shooter.stage.units.splice(this.shooter.stage.units.indexOf(this), 1);
-                if(this.shooter.stage.enemy === this) {
-                    this.shooter.stage.enemy = null;
-                }
             }
         };
         return EnemyUnit;
@@ -814,7 +816,7 @@ var BulletStorm;
     var PlayerUnit = (function (_super) {
         __extends(PlayerUnit, _super);
         function PlayerUnit(shooter) {
-                _super.call(this, shooter, rumiaImage);
+                _super.call(this, rumiaImage);
             this.life = 6;
             this.bomb = 3;
             this.probation = 0;
@@ -843,7 +845,10 @@ var BulletStorm;
 (function (BulletStorm) {
     window.addEventListener('load', function () {
         var _this = this;
-        var loader = new BulletStorm.ResourceLoader(function () {
+        var loader = new BulletStorm.ResourceLoader();
+        var bulletScript = loader.loadText('script/nway.ts');
+        var stageScript = loader.loadText('script/kogasa.ts');
+        loader.start(function () {
             var canvas = document.querySelector('#canvas');
             var graphics = _this.canvas.getContext('2d');
             var fpsCountStart = performance.now();
@@ -853,16 +858,11 @@ var BulletStorm;
             var shooter = new BulletStorm.Shooter(canvas);
             var stage = new BulletStorm.Stage(shooter);
             shooter.stage = stage;
+            shooter.stage.setScript(stageScript());
             var player = new BulletStorm.PlayerUnit(shooter);
             player.position.x = canvas.width / 2;
             player.position.y = canvas.height - 150;
             shooter.player = player;
-            var enemy = new BulletStorm.EnemyUnit(shooter);
-            enemy.position.x = shooter.width / 2;
-            enemy.position.y = shooter.height / 2 - 160;
-            enemy.setScript(bulletScript());
-            stage.units.push(enemy);
-            shooter.stage.enemy = enemy;
             var keyTable = {
             };
             window.addEventListener('keydown', function (e) {
@@ -883,27 +883,28 @@ var BulletStorm;
                 return keyTable[keyCode] !== undefined ? (keyTable[keyCode] - shooter.stage.totalFrameCount) : null;
             }
             var editing = false;
+            var textarea = document.getElementById('textarea');
+            var editor = document.getElementById('editor');
+            var samples = document.querySelectorAll('#samples > a');
             document.getElementById('edit').addEventListener('click', function () {
-                document.getElementById('textarea').value = enemy.scriptText;
-                document.getElementById('editor').setAttribute('style', 'display: block;');
+                textarea.value = shooter.stage.scriptText;
+                editor.setAttribute('style', 'display: block;');
                 editing = true;
             });
             document.getElementById('edit_cancel').addEventListener('click', function () {
-                document.getElementById('editor').removeAttribute('style');
+                editor.removeAttribute('style');
                 editing = false;
             });
             document.getElementById('edit_ok').addEventListener('click', function () {
-                enemy.setScript(document.getElementById('textarea').value);
-                document.getElementById('editor').removeAttribute('style');
+                shooter.stage.setScript(textarea.value);
+                editor.removeAttribute('style');
                 editing = false;
             });
-            var samples = document.querySelectorAll('#samples > a');
             for(var i = 0; i < samples.length; i++) {
                 (function () {
                     var a = samples[i];
                     a.addEventListener('click', function (e) {
                         $.get(a.getAttribute('href'), function (data) {
-                            var textarea = document.getElementById('textarea');
                             textarea.value = data;
                         });
                         e.preventDefault();
@@ -917,7 +918,7 @@ var BulletStorm;
                         shooter.player.velocity.x = 0;
                         shooter.player.velocity.y = 0;
                         if(getKey(32)) {
-                            shooter.swing();
+                            shooter.stage.swing();
                         }
                         var accurate = getKey(16) !== null;
                         var speed = accurate ? 1 : 3;
@@ -978,7 +979,5 @@ var BulletStorm;
             }
             updateFrame();
         });
-        var bulletScript = loader.loadText('script/nway.ts');
-        loader.start();
     });
 })(BulletStorm || (BulletStorm = {}));

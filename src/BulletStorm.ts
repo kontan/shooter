@@ -16,12 +16,6 @@ module BulletStorm {
     //var origin: string = "http://phyzkit.net/shooter/res/";
     // export つけなくてもコンパイル通る　バグっぽい
     export var origin: string = "res/";
-    var rumiaImagePath: string           = origin + 'rumia.png';
-    var rumiaImagePathF: string          = origin + 'rumia_f.png';
-    var rumiaImagePathB: string          = origin + 'rumia_b.png';
-    var rumiaImagePathL: string          = origin + 'rumia_l.png';
-    var rumiaImagePathR: string          = origin + 'rumia_r.png';
-    var kogasaImagePath: string          = origin + 'kogasa.png';
     var bulletLargeImagePath: string     = origin + 'bullet_large.png';
     var dartImagePath: string            = origin + 'dart.png';
     var pointerImagePath: string         = origin + 'pointer.png';
@@ -50,42 +44,36 @@ module BulletStorm {
         right: HTMLImageElement;    
     }
 
-    var rumiaImage: UnitImages = {
-        image: loadImage(rumiaImagePath),
-        front: loadImage(rumiaImagePathF),
-        back:  loadImage(rumiaImagePathB),
-        left:  loadImage(rumiaImagePathL),
-        right: loadImage(rumiaImagePathR)
-    };
-
-    var kogasaImage: UnitImages = {
-        image: loadImage(kogasaImagePath),
-        front: loadImage(kogasaImagePath),
-        back:  loadImage(kogasaImagePath),
-        left:  loadImage(kogasaImagePath),
-        right: loadImage(kogasaImagePath)
-    };
-
-    //////////////////////////////////////////////////////////
-    // Game library
-    /////////////////////////////////////////////////////////
-
-    export interface BulletScript {
-        add(bullet: Bullet);
+    function loadDirectionalImages(prefix: string): UnitImages {
+        return {
+            image: loadImage(prefix + '.png'),
+            front: loadImage(prefix + '_f.png'),
+            back:  loadImage(prefix + '_b.png'),
+            left:  loadImage(prefix + '_l.png'),
+            right: loadImage(prefix + '_r.png')
+        };        
     }
 
-    /////////////////////////////////////////////////////////
-    // Application
-    ///////////////////////////////////////////////////////////
+    var rumiaImage: UnitImages = loadDirectionalImages('res/rumia');
 
+    var kogasaImage: UnitImages = loadDirectionalImages('res/kogasa');
 
+    // 動的に引数を構成して new する
+    // http://stackoverflow.com/questions/1606797/use-of-apply-with-new-operator-is-this-possible
+    function construct(constructor, args) {
+        function F() {
+            return constructor.apply(this, args);
+        }
+        F.prototype = constructor.prototype;
+        return new F();
+    }
 
     export class Shooter{
         private _width: number;
         private _height: number;
         stage: Stage = null;
         player: PlayerUnit = null;
-        currentFrame: number = 0;
+        now: number = 0;
         reservedActions: { (): void; }[] = [];
 
         constructor(private canvas: HTMLCanvasElement){
@@ -103,11 +91,11 @@ module BulletStorm {
         }        
 
         loadScript(path: string, onLoad: (scriptText:string)=>void): void{
-        	var loader = new ResourceLoader(()=>{
-        		onLoad(script());
-        	});
+        	var loader = new ResourceLoader();
         	var script = loader.loadText(path);
-        	loader.start();
+        	loader.start(()=>{
+                onLoad(script());
+            });
         }
 
         contains(point: Vector2, margin?: number = 0): bool{
@@ -120,7 +108,7 @@ module BulletStorm {
         update(): void{
             this.reservedActions.filter(action=>action());
             this.stage.update();    
-            this.currentFrame += 1;
+            this.now += 1;
         }
 
         /// アクションコンビネータ //////////////////////////////////////////////////////////////
@@ -153,6 +141,8 @@ module BulletStorm {
                 }
             }
         }
+
+        newEnemy(){ return new EnemyUnit(this); };
     }
     Object.freeze(Shooter);
 
@@ -161,8 +151,7 @@ module BulletStorm {
         playerBullets: Bullet[] = [];
         units: EnemyUnit[] = [];
         effects: HitEffect[] = [];
-        enemy: EnemyUnit = null;
-
+        
         stageScrollDelta: number = 0;
         cloudScrollDelta: number = 0;
         lowerCloudScrollDelta: number = 0;
@@ -173,9 +162,38 @@ module BulletStorm {
     	brightness: number = 1;
         totalFrameCount: number = 0;
 
+        // script
+        scriptText: string = null;
+        scriptScope: any = null;
+
         constructor(private shooter: Shooter){
             Object.seal(this);
         }
+
+        loadScript(scriptPath: string, onLoad: () => void): void {
+            $.get(scriptPath, (data: string) => {
+                this.setScript(data);
+                onLoad();
+            });
+        }        
+
+        setScript(scriptText: string): void {
+            try{
+                this.scriptText = scriptText;
+                this.scriptScope = {
+                    'shooter':     this.shooter,
+                    'exports':     {},
+                    'Vector2':     Vector2,
+                    'LargeBullet': LargeBullet
+                };
+                var env = chainchomp.pick();
+                var scriptFunc = env(scriptText, this.scriptScope);
+                scriptFunc();
+            }catch(e){
+                console.log(e.message);
+                console.log(scriptText);
+            }
+        }        
 
         swing(size?: number = 20, angle?: number = Math.PI * 2 * Math.random()): void{
             this.swinging = new Vector2(size * Math.cos(angle), size * Math.sin(angle));  
@@ -193,21 +211,37 @@ module BulletStorm {
         update(): void{
         	if(this.isActive()){
 
+                if(this.scriptScope && this.scriptScope.exports.update){
+                    this.scriptScope.exports.update();
+                }
+
     	    	// update game states
 
     			this.bullets.forEach((bullet: Bullet)=>{
     	            bullet.update();
+                    bullet.position.add(bullet.velocity);
     	        });
 
     	        this.playerBullets.forEach((bullet: Bullet)=>{
     	            bullet.update();
+                    bullet.position.add(bullet.velocity);
     	        });
 
+                var updateUnit = (unit) => {
+                    if(unit.update){
+                        unit.update();
+                    }
+                    unit.position.x = Math.max(0, Math.min(this.shooter.width,  unit.position.x + unit.velocity.x));
+                    unit.position.y = Math.max(0, Math.min(this.shooter.height, unit.position.y + unit.velocity.y));
+                    unit.velocity.set(0, 0);
+                }
     	        this.units.forEach((unit: Unit)=>{
-    	            unit.update();
+                    updateUnit(unit);
     	        });
 
-    	        this.shooter.player.update();
+                if(this.shooter.player.update){
+    	           updateUnit(this.shooter.player);
+                }
 
     			this.effects = this.effects.filter((effect: HitEffect)=>{
     	            effect.update();
@@ -230,7 +264,7 @@ module BulletStorm {
     	            this.bullets = this.bullets.filter((bullet: Bullet)=>{
     	                var delta = new Vector2(0, 0);
     	                delta.subVectors(this.shooter.player.position, bullet.position);
-    	                if(delta.length() < (this.shooter.player.radius + bullet.size)){
+    	                if(delta.length() < ((this.shooter.player.radius || 0) + bullet.size)){
     	                	crashed = true;    
     	                    return false;
     	                }else{
@@ -249,7 +283,7 @@ module BulletStorm {
     	        		var unit: EnemyUnit = this.units[i];
     	                var delta = new Vector2(0, 0);
     	                delta.subVectors(unit.position, bullet.position);
-    	                if(delta.length() < (unit.radius + bullet.size)){
+    	                if(delta.length() < ((unit.radius || 0) + bullet.size)){
     	                    result = false;
     	                    this.effects.push(new HitEffect(new Vector2(
     	                    	bullet.position.x - 8 + 16 * Math.random(),
@@ -353,11 +387,12 @@ module BulletStorm {
     	    graphics.restore();
 
     		// paint HUD
-    		if(this.enemy !== null){
+    		if(this.units.length > 0){
+                var enemy = this.units[0];
     			graphics.fillStyle = 'rgba(0, 0, 0, 0.5)';
     			graphics.fillRect(10, 10, 480, 3);
     			graphics.fillStyle = 'rgba(255, 64, 64, 0.9)';
-    			graphics.fillRect(10, 10, 480 * this.enemy.life / this.enemy.maxLife, 3);
+    			graphics.fillRect(10, 10, 480 * enemy.life / enemy.maxLife, 3);
     		}
 
     	    if(this.brightness < 1){
@@ -381,7 +416,8 @@ module BulletStorm {
 
     export class LargeBullet extends Bullet{
         constructor(){
-            super(4);
+            super();
+            this.size = 4;
             Object.seal(this);
         }
         paint(g: CanvasRenderingContext2D): void{
@@ -397,7 +433,8 @@ module BulletStorm {
 
     export class DartBullet extends Bullet{
         constructor(){
-            super(4);
+            super();
+            this.size = 4;
             Object.seal(this);
         }
         paint(g: CanvasRenderingContext2D): void{
@@ -412,73 +449,26 @@ module BulletStorm {
     Object.freeze(DartBullet);
 
     export class EnemyUnit extends Unit{
-        scriptText: string = null;
-        private scriptState: any = {}; 
         maxLife: number = 1000;
         life: number = 1000;
-        exposed: Object = undefined;
-        scriptFunc: () => void = undefined;
+
+        updateUnit: () => void = null;
 
         constructor(private shooter: Shooter){
-            super(shooter, kogasaImage);
+            super(kogasaImage);
             this.radius = 30;
-            this.exposed = {
-                'shooter':  this.shooter,
-                'unit': this,
-                'state':  this.scriptState,
-                'Vector2': Vector2,
-                'LargeBullet': LargeBullet
-            };
             Object.seal(this);
-        }
-
-        setScript(scriptText: string): void{
-
-            // 動的に引数を構成して new する
-            // http://stackoverflow.com/questions/1606797/use-of-apply-with-new-operator-is-this-possible
-            function construct(constructor, args) {
-                function F() {
-                    return constructor.apply(this, args);
-                }
-                F.prototype = constructor.prototype;
-                return new F();
-            }
-
-            try{
-                this.scriptText = scriptText;
-                this.scriptState = {};
-                var env = chainchomp.pick();
-                this.scriptFunc = env(scriptText, this.exposed);
-            }catch(e){
-                console.log(e.message);
-                console.log(scriptText);
-                this.scriptFunc = null;
-            }
         }
 
         update(): void{
             super.update();
-            if(this.scriptFunc !== null){
-                var args: any[] = [
-                    this.shooter, 
-                    this, 
-                    this.scriptState,
-                    Vector2,
-                    LargeBullet
-                ];
-                try{
-                    this.scriptFunc();
-                }catch(e){
-                    console.log('Script Runtime Error: ' + e.message);
-                    this.scriptFunc = null;
-                }
+
+            if(this.updateUnit){
+                this.updateUnit();
             }
 
             if(this.life === 0){
             	this.shooter.stage.units.splice(this.shooter.stage.units.indexOf(this), 1);
-            	if(this.shooter.stage.enemy === this){
-            		this.shooter.stage.enemy = null;
-            	}
             }
         }
     }
@@ -489,7 +479,7 @@ module BulletStorm {
         bomb: number = 3;
         probation: number = 0;
         constructor(shooter: Shooter){
-            super(shooter, rumiaImage);
+            super(rumiaImage);
             Object.seal(this);
         }
         crash(): void{

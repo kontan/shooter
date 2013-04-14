@@ -8,7 +8,13 @@ module BulletStorm {
 
     window.addEventListener('load', ()=>{
 
-        var loader: BulletStorm.ResourceLoader = new BulletStorm.ResourceLoader(()=>{
+        var loader: BulletStorm.ResourceLoader = new BulletStorm.ResourceLoader();
+
+        var bulletScript: () => string = loader.loadText('script/nway.ts');
+
+        var stageScript: () => string = loader.loadText('script/kogasa.ts');
+
+        loader.start(()=>{
 
             // references
             var canvas: HTMLCanvasElement = <HTMLCanvasElement> document.querySelector('#canvas');
@@ -25,18 +31,12 @@ module BulletStorm {
 
             var stage: Stage = new Stage(shooter);
             shooter.stage = stage;
+            shooter.stage.setScript(stageScript());
 
             var player: PlayerUnit = new PlayerUnit(shooter);
             player.position.x = canvas.width / 2;
             player.position.y = canvas.height - 150;
             shooter.player = player;
-
-            var enemy: EnemyUnit = new EnemyUnit(shooter);
-            enemy.position.x = shooter.width / 2;
-            enemy.position.y = shooter.height / 2 - 160;
-            enemy.setScript(bulletScript());
-            stage.units.push(enemy);
-            shooter.stage.enemy = enemy;
 
             // event handling
 
@@ -66,30 +66,32 @@ module BulletStorm {
 
             var editing: bool = false;
 
+            var textarea: HTMLTextAreaElement = <HTMLTextAreaElement>document.getElementById('textarea');
+            var editor: HTMLElement = document.getElementById('editor');
+            var samples: NodeList = document.querySelectorAll('#samples > a');
+
             document.getElementById('edit').addEventListener('click', ()=>{
-                document.getElementById('textarea').value = enemy.scriptText;
-                document.getElementById('editor').setAttribute('style', 'display: block;');
+                textarea.value = shooter.stage.scriptText;
+                editor.setAttribute('style', 'display: block;');
                 editing = true;
             });
 
             document.getElementById('edit_cancel').addEventListener('click', ()=>{
-                document.getElementById('editor').removeAttribute('style');
+                editor.removeAttribute('style');
                 editing = false;
             });
 
             document.getElementById('edit_ok').addEventListener('click', ()=>{
-                enemy.setScript(document.getElementById('textarea').value);
-                document.getElementById('editor').removeAttribute('style');
+                shooter.stage.setScript(textarea.value);
+                editor.removeAttribute('style');
                 editing = false;
             });
 
-            var samples = document.querySelectorAll('#samples > a');
             for(var i = 0; i < samples.length; i++){
                 ()=>{
-                    var a = <HTMLAElement> samples[i];
+                    var a = <HTMLAnchorElement> samples[i];
                     a.addEventListener('click', (e: MouseEvent)=>{
                         $.get(a.getAttribute('href'), function(data){
-                            var textarea = <HTMLTextareaElement> document.getElementById('textarea');
                             textarea.value = data;
                         });
                         e.preventDefault();
@@ -113,7 +115,7 @@ module BulletStorm {
 
                         // key 
                         if(getKey(32)){ // space key
-                            shooter.swing();
+                            shooter.stage.swing();
                         }
 
                         var accurate = getKey(16) !== null;
@@ -196,13 +198,11 @@ module BulletStorm {
                     updateFrame();    
                 });
             }
-
+        
             // start game loop
             updateFrame();
+            
         });
-
-        var bulletScript: () => string = loader.loadText('script/nway.ts');
-        loader.start();
     });
 }
 
