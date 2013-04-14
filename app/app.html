@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+    <head>
+    	<meta charset="UTF-8">
+        <link rel="stylesheet" href="app.css" />
+        <script type="text/javascript" src="libs/jquery-1.9.1.js"></script>
+        <script type="text/javascript" src="libs/typescript.js"></script>
+        <script type="text/javascript" src="../../chainchomp.js/chainchomp.js"></script>
+        <script type="text/javascript" src="app.js"></script>
+    </head>
+    <body>
+        <div id="container">
+            <img id="backgound" src="res/background.png" />
+            <canvas id="canvas" width="500" height="560"></canvas>
+            <div id="sidebar">
+                <div><span class="label">LIFE</span><span id="life"></span></div>
+                <div><span class="label">BOMB</span><span id="bomb"></span></div>
+                <div>Bullets: <span id="bullets"></span></div>
+                <div>FPS: <span id="fps"></span></div>
+                <div><input id="edit" type="button" value="スクリプトの編集"></div>
+            </div>
+            <div id="editor">
+                <textarea id="textarea"　wrap="off"></textarea>
+                <div id="samples">
+                    Sample: 
+                    <a href="script/random.ts">Random</a> 
+                    <a href="script/nway.ts">N-Way</a>
+                </div>
+                <input id="edit_ok" type="button" value="OK" />
+                <input id="edit_cancel" type="button" value="Cancel" />
+            </div>
+        </div>
+    </body>
+</html>
