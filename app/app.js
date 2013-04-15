@@ -192,6 +192,7 @@ var BulletStorm;
     })();
     BulletStorm.Vector2 = Vector2;    
     Object.freeze(Vector2);
+    Object.freeze(Vector2.prototype);
 })(BulletStorm || (BulletStorm = {}));
 var BulletStorm;
 (function (BulletStorm) {
@@ -213,12 +214,16 @@ var BulletStorm;
             }
         };
         ResourceLoader.prototype.loadImage = function (path) {
+            var _this = this;
             var img = new Image();
             img.addEventListener('load', this.loaded);
             img.addEventListener('error', this.loaded);
             img.addEventListener('abort', this.loaded);
             this.loaders.push(function () {
                 img.src = path;
+                if(img.complete) {
+                    _this.loaded();
+                }
             });
             return function () {
                 return img.complete ? img : null;
@@ -468,6 +473,10 @@ var BulletStorm;
             this.reservedActions = [];
             this._width = canvas.width;
             this._height = canvas.height;
+            this.stage = new Stage(this);
+            this.player = new PlayerUnit(this);
+            this.player.position.x = this.width / 2;
+            this.player.position.y = this.height - 150;
             Object.seal(this);
         }
         Object.defineProperty(Shooter.prototype, "width", {
@@ -532,21 +541,6 @@ var BulletStorm;
             enumerable: true,
             configurable: true
         });
-        Shooter.prototype.nway = function (n, d, origin, target, speed) {
-            var _this = this;
-            return function () {
-                var velocity = new BulletStorm.Vector2();
-                velocity.subVectors(target, origin);
-                velocity.setLength(1);
-                var angle = Math.atan2(velocity.y, velocity.x);
-                for(var i = 0; i < n; i++) {
-                    var bullet = new LargeBullet();
-                    bullet.position = origin.clone();
-                    bullet.velocity = BulletStorm.Vector2.fromAngle(angle - d * (n - 1) * 0.5 + d * i, speed);
-                    _this.stage.bullets.push(bullet);
-                }
-            };
-        };
         Shooter.prototype.newEnemy = function () {
             return new EnemyUnit(this);
         };
@@ -554,6 +548,7 @@ var BulletStorm;
     })();
     BulletStorm.Shooter = Shooter;    
     Object.freeze(Shooter);
+    Object.freeze(Shooter.prototype);
     var Stage = (function () {
         function Stage(shooter) {
             this.shooter = shooter;
@@ -561,42 +556,80 @@ var BulletStorm;
             this.playerBullets = [];
             this.units = [];
             this.effects = [];
-            this.stageScrollDelta = 0;
-            this.cloudScrollDelta = 0;
-            this.lowerCloudScrollDelta = 0;
             this.pointerAlpha = 0;
             this.swinging = new BulletStorm.Vector2(0, 0);
             this.brightness = 1;
             this.totalFrameCount = 0;
             this.scriptText = null;
             this.scriptScope = null;
+            this.loader = new BulletStorm.ResourceLoader();
+            this.completed = true;
             Object.seal(this);
         }
         Stage.prototype.loadScript = function (scriptPath, onLoad) {
             var _this = this;
             $.get(scriptPath, function (data) {
-                _this.setScript(data);
+                _this.script = data;
                 onLoad();
             });
         };
-        Stage.prototype.setScript = function (scriptText) {
+        Stage.prototype.callback = function (name) {
+            var args = [];
+            for (var _i = 0; _i < (arguments.length - 1); _i++) {
+                args[_i] = arguments[_i + 1];
+            }
             try  {
-                this.scriptText = scriptText;
-                this.scriptScope = {
-                    'shooter': this.shooter,
-                    'exports': {
-                    },
-                    'Vector2': BulletStorm.Vector2,
-                    'LargeBullet': LargeBullet
-                };
-                var env = chainchomp.pick();
-                var scriptFunc = env(scriptText, this.scriptScope);
-                scriptFunc();
+                if(this.scriptScope && typeof this.scriptScope.exports[name] === 'function') {
+                    var result = chainchomp.callback(this.scriptScope.exports[name], args);
+                    return result;
+                }
             } catch (e) {
                 console.log(e.message);
-                console.log(scriptText);
+                console.log(this.scriptText);
+                this.scriptScope.exports[name] = undefined;
             }
         };
+        Stage.prototype.complete = function () {
+            var _this = this;
+            this.loader.start(function () {
+                _this.callback('complete');
+                if(typeof _this.scriptScope.exports.complete === 'function') {
+                    delete _this.scriptScope.exports.complete;
+                }
+                _this.completed = true;
+            });
+        };
+        Object.defineProperty(Stage.prototype, "script", {
+            get: function () {
+                return this.scriptText;
+            },
+            set: function (scriptText) {
+                try  {
+                    this.scriptText = scriptText;
+                    this.scriptScope = {
+                        'shooter': this.shooter,
+                        'exports': {
+                        },
+                        'Vector2': BulletStorm.Vector2,
+                        'LargeBullet': LargeBullet
+                    };
+                    var env = chainchomp.pick();
+                    var scriptFunc = env(scriptText, this.scriptScope);
+                    var input = document.querySelector('#edit_debug input');
+                    var checked = input.checked;
+                    scriptFunc({
+                        debug: checked
+                    });
+                    this.completed = false;
+                } catch (e) {
+                    console.log(e.message);
+                    console.log(scriptText);
+                }
+                this.complete();
+            },
+            enumerable: true,
+            configurable: true
+        });
         Stage.prototype.swing = function (size, angle) {
             if (typeof size === "undefined") { size = 20; }
             if (typeof angle === "undefined") { angle = Math.PI * 2 * Math.random(); }
@@ -605,161 +638,180 @@ var BulletStorm;
         Stage.prototype.isActive = function () {
             return this.shooter.player.life > 0 && this.units.length > 0;
         };
-        Stage.prototype.spell = function () {
+        Stage.prototype.initialize = function () {
+            this.bullets = [];
+            this.playerBullets = [];
+            this.units = [];
+            this.effects = [];
+            this.pointerAlpha = 0;
+            this.swinging.set(0, 0);
+            this.brightness = 1;
+            this.totalFrameCount = 0;
+        };
+        Stage.prototype.loadImage = function (path) {
+            return this.loader.loadImage(path);
         };
         Stage.prototype.update = function () {
             var _this = this;
-            if(this.isActive()) {
-                if(this.scriptScope && this.scriptScope.exports.update) {
-                    this.scriptScope.exports.update();
-                }
-                this.bullets.forEach(function (bullet) {
-                    bullet.update();
-                    bullet.position.add(bullet.velocity);
-                });
-                this.playerBullets.forEach(function (bullet) {
-                    bullet.update();
-                    bullet.position.add(bullet.velocity);
-                });
-                var updateUnit = function (unit) {
-                    if(unit.update) {
-                        unit.update();
-                    }
-                    unit.position.x = Math.max(0, Math.min(_this.shooter.width, unit.position.x + unit.velocity.x));
-                    unit.position.y = Math.max(0, Math.min(_this.shooter.height, unit.position.y + unit.velocity.y));
-                    unit.velocity.set(0, 0);
-                };
-                this.units.forEach(function (unit) {
-                    updateUnit(unit);
-                });
-                if(this.shooter.player.update) {
-                    updateUnit(this.shooter.player);
-                }
-                this.effects = this.effects.filter(function (effect) {
-                    effect.update();
-                    return effect.count < BulletStorm.HitEffect.maxCount;
-                });
-                this.playerBullets = this.playerBullets.filter(function (bullet) {
-                    return _this.shooter.contains(bullet.position, 64);
-                });
-                this.bullets = this.bullets.filter(function (bullet) {
-                    return _this.shooter.contains(bullet.position, 64);
-                });
-                if(this.shooter.player.probation === 0) {
-                    var crashed = false;
-                    this.bullets = this.bullets.filter(function (bullet) {
-                        var delta = new BulletStorm.Vector2(0, 0);
-                        delta.subVectors(_this.shooter.player.position, bullet.position);
-                        if(delta.length() < ((_this.shooter.player.radius || 0) + bullet.size)) {
-                            crashed = true;
-                            return false;
-                        } else {
-                            return true;
-                        }
+            if(this.completed) {
+                if(this.isActive()) {
+                    this.callback('update');
+                    this.complete();
+                    this.bullets.forEach(function (bullet) {
+                        bullet.update();
+                        bullet.position.add(bullet.velocity);
                     });
-                    if(crashed) {
-                        this.shooter.player.crash();
-                        this.shooter.stage.swing();
+                    this.playerBullets.forEach(function (bullet) {
+                        bullet.update();
+                        bullet.position.add(bullet.velocity);
+                    });
+                    var updateUnit = function (unit) {
+                        if(unit.update) {
+                            unit.update();
+                        }
+                        unit.position.x = Math.max(0, Math.min(_this.shooter.width, unit.position.x + unit.velocity.x));
+                        unit.position.y = Math.max(0, Math.min(_this.shooter.height, unit.position.y + unit.velocity.y));
+                        unit.velocity.set(0, 0);
+                    };
+                    this.units.forEach(function (unit) {
+                        updateUnit(unit);
+                    });
+                    if(this.shooter.player.update) {
+                        updateUnit(this.shooter.player);
                     }
-                }
-                this.playerBullets = this.playerBullets.filter(function (bullet) {
-                    var result = true;
-                    for(var i = 0; i < _this.units.length; i++) {
-                        var unit = _this.units[i];
-                        var delta = new BulletStorm.Vector2(0, 0);
-                        delta.subVectors(unit.position, bullet.position);
-                        if(delta.length() < ((unit.radius || 0) + bullet.size)) {
-                            result = false;
-                            _this.effects.push(new BulletStorm.HitEffect(new BulletStorm.Vector2(bullet.position.x - 8 + 16 * Math.random(), bullet.position.y - 8 * Math.random()), 0, hitEffectImage));
-                            unit.life = Math.max(0, unit.life - 1);
-                            break;
+                    this.effects = this.effects.filter(function (effect) {
+                        effect.update();
+                        return effect.count < BulletStorm.HitEffect.maxCount;
+                    });
+                    this.playerBullets = this.playerBullets.filter(function (bullet) {
+                        return _this.shooter.contains(bullet.position, 64);
+                    });
+                    this.bullets = this.bullets.filter(function (bullet) {
+                        return _this.shooter.contains(bullet.position, 64);
+                    });
+                    if(this.shooter.player.probation === 0) {
+                        var crashed = false;
+                        this.bullets = this.bullets.filter(function (bullet) {
+                            var delta = new BulletStorm.Vector2(0, 0);
+                            delta.subVectors(_this.shooter.player.position, bullet.position);
+                            if(delta.length() < ((_this.shooter.player.radius || 0) + bullet.size)) {
+                                crashed = true;
+                                return false;
+                            } else {
+                                return true;
+                            }
+                        });
+                        if(crashed) {
+                            this.shooter.player.crash();
+                            this.shooter.stage.swing();
                         }
                     }
-                    return result;
-                });
-                this.totalFrameCount += 1;
-                this.brightness = Math.min(1, this.brightness + 0.02);
-                this.swinging.mul(0.95);
-                this.stageScrollDelta += 2.0;
-                this.stageScrollDelta = this.stageScrollDelta % stageBackgroundImage.height;
-                this.cloudScrollDelta += 22.2;
-                this.cloudScrollDelta = this.cloudScrollDelta % stageCloudImage.height;
-                this.lowerCloudScrollDelta += 8.7;
-                this.lowerCloudScrollDelta = this.lowerCloudScrollDelta % stageCloudImage.height;
-            } else {
-                this.brightness = Math.max(0, this.brightness - 0.02);
+                    this.playerBullets = this.playerBullets.filter(function (bullet) {
+                        var result = true;
+                        for(var i = 0; i < _this.units.length; i++) {
+                            var unit = _this.units[i];
+                            var delta = new BulletStorm.Vector2(0, 0);
+                            delta.subVectors(unit.position, bullet.position);
+                            if(delta.length() < ((unit.radius || 0) + bullet.size)) {
+                                result = false;
+                                _this.effects.push(new BulletStorm.HitEffect(new BulletStorm.Vector2(bullet.position.x - 8 + 16 * Math.random(), bullet.position.y - 8 * Math.random()), 0, hitEffectImage));
+                                unit.life = Math.max(0, unit.life - 1);
+                                break;
+                            }
+                        }
+                        return result;
+                    });
+                    this.totalFrameCount += 1;
+                    this.brightness = Math.min(1, this.brightness + 0.02);
+                    this.swinging.mul(0.95);
+                } else {
+                    this.brightness = Math.max(0, this.brightness - 0.02);
+                }
             }
         };
         Stage.prototype.paint = function (graphics) {
-            graphics.save();
-            var swingRange = Math.sin(Math.PI * 2 * (this.totalFrameCount % 5) / 5);
-            graphics.translate(swingRange * this.swinging.x, swingRange * this.swinging.y);
-            graphics.drawImage(stageBackgroundImage, 0, this.stageScrollDelta);
-            graphics.drawImage(stageBackgroundImage, 0, this.stageScrollDelta - stageBackgroundImage.height);
-            graphics.drawImage(stageCloudImage, 0, this.lowerCloudScrollDelta);
-            graphics.drawImage(stageCloudImage, 0, this.lowerCloudScrollDelta - stageCloudImage.height);
-            graphics.globalCompositeOperation = 'lighter';
-            graphics.drawImage(upperCloudImage, 0, this.cloudScrollDelta);
-            graphics.drawImage(upperCloudImage, 0, this.cloudScrollDelta - stageCloudImage.height);
-            graphics.globalCompositeOperation = 'source-over';
-            this.units.forEach(function (unit) {
+            if(this.completed) {
                 graphics.save();
-                graphics.translate(unit.position.x, unit.position.y);
-                unit.paint(graphics);
-                graphics.restore();
-            });
-            graphics.save();
-            graphics.translate(this.shooter.player.position.x, this.shooter.player.position.y);
-            this.shooter.player.paint(graphics);
-            graphics.restore();
-            this.effects.forEach(function (effect) {
-                effect.paint(graphics);
-            });
-            this.playerBullets.forEach(function (bullet) {
+                var swingRange = Math.sin(Math.PI * 2 * (this.totalFrameCount % 5) / 5);
+                graphics.translate(swingRange * this.swinging.x, swingRange * this.swinging.y);
                 graphics.save();
-                graphics.translate(bullet.position.x, bullet.position.y);
-                bullet.paint(graphics);
+                this.callback('paintBackground', graphics);
                 graphics.restore();
-            });
-            this.bullets.forEach(function (bullet) {
-                graphics.save();
-                graphics.translate(bullet.position.x, bullet.position.y);
-                bullet.paint(graphics);
-                graphics.restore();
-            });
-            if(this.pointerAlpha > 0) {
+                this.units.forEach(function (unit) {
+                    graphics.save();
+                    graphics.translate(unit.position.x, unit.position.y);
+                    unit.paint(graphics);
+                    graphics.restore();
+                });
                 graphics.save();
                 graphics.translate(this.shooter.player.position.x, this.shooter.player.position.y);
-                graphics.globalAlpha = this.pointerAlpha;
-                graphics.drawImage(pointerImage, -pointerImage.width / 2, -pointerImage.height / 2);
+                this.shooter.player.paint(graphics);
                 graphics.restore();
-            }
-            graphics.restore();
-            if(this.units.length > 0) {
-                var enemy = this.units[0];
-                graphics.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                graphics.fillRect(10, 10, 480, 3);
-                graphics.fillStyle = 'rgba(255, 64, 64, 0.9)';
-                graphics.fillRect(10, 10, 480 * enemy.life / enemy.maxLife, 3);
-            }
-            if(this.brightness < 1) {
-                graphics.fillStyle = 'rgba(0, 0, 0, ' + (0.5 * (1 - this.brightness)) + ')';
-                graphics.fillRect(0, 0, this.shooter.width, this.shooter.height);
-            }
-            if(this.brightness < 1) {
-                graphics.save();
-                graphics.globalAlpha = 1 - this.brightness;
-                graphics.fillStyle = 'white';
-                graphics.font = 'normal 400 48px/2 Unknown Font, sans-seri';
-                var hudText = this.shooter.player.life > 0 ? 'Stage Cleared!' : 'Game Over...';
-                var metrics = graphics.measureText(hudText);
-                graphics.fillText(hudText, (this.shooter.width - metrics.width) / 2, 200);
+                this.effects.forEach(function (effect) {
+                    effect.paint(graphics);
+                });
+                this.playerBullets.forEach(function (bullet) {
+                    graphics.save();
+                    graphics.translate(bullet.position.x, bullet.position.y);
+                    bullet.paint(graphics);
+                    graphics.restore();
+                });
+                this.bullets.forEach(function (bullet) {
+                    graphics.save();
+                    graphics.translate(bullet.position.x, bullet.position.y);
+                    bullet.paint(graphics);
+                    graphics.restore();
+                });
+                if(this.pointerAlpha > 0) {
+                    graphics.save();
+                    graphics.translate(this.shooter.player.position.x, this.shooter.player.position.y);
+                    graphics.globalAlpha = this.pointerAlpha;
+                    graphics.drawImage(pointerImage, -pointerImage.width / 2, -pointerImage.height / 2);
+                    graphics.restore();
+                }
                 graphics.restore();
+                if(this.units.length > 0) {
+                    var enemy = this.units[0];
+                    graphics.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    graphics.fillRect(10, 10, 480, 3);
+                    graphics.fillStyle = 'rgba(255, 64, 64, 0.9)';
+                    graphics.fillRect(10, 10, 480 * enemy.life / enemy.maxLife, 3);
+                }
+                if(this.brightness < 1) {
+                    graphics.fillStyle = 'rgba(0, 0, 0, ' + (0.5 * (1 - this.brightness)) + ')';
+                    graphics.fillRect(0, 0, this.shooter.width, this.shooter.height);
+                }
+                if(this.brightness < 1) {
+                    graphics.save();
+                    graphics.globalAlpha = 1 - this.brightness;
+                    graphics.fillStyle = 'white';
+                    graphics.font = 'normal 400 48px/2 Unknown Font, sans-seri';
+                    var hudText = this.shooter.player.life > 0 ? 'Stage Cleared!' : 'Game Over...';
+                    var metrics = graphics.measureText(hudText);
+                    graphics.fillText(hudText, (this.shooter.width - metrics.width) / 2, 200);
+                    graphics.restore();
+                }
             }
+        };
+        Stage.prototype.nway = function (n, d, origin, target, speed) {
+            var _this = this;
+            return function () {
+                var velocity = new BulletStorm.Vector2();
+                velocity.subVectors(target, origin);
+                var angle = Math.atan2(velocity.y, velocity.x);
+                for(var i = 0; i < n; i++) {
+                    var bullet = new LargeBullet();
+                    bullet.position = origin.clone();
+                    bullet.velocity = BulletStorm.Vector2.fromAngle(angle - d * (n - 1) * 0.5 + d * i, speed);
+                    _this.bullets.push(bullet);
+                }
+            };
         };
         return Stage;
     })();
     BulletStorm.Stage = Stage;    
+    Object.freeze(Stage);
+    Object.freeze(Stage.prototype);
     var LargeBullet = (function (_super) {
         __extends(LargeBullet, _super);
         function LargeBullet() {
@@ -775,6 +827,7 @@ var BulletStorm;
     })(BulletStorm.Bullet);
     BulletStorm.LargeBullet = LargeBullet;    
     Object.freeze(LargeBullet);
+    Object.freeze(LargeBullet.prototype);
     var DartBullet = (function (_super) {
         __extends(DartBullet, _super);
         function DartBullet() {
@@ -789,6 +842,7 @@ var BulletStorm;
     })(BulletStorm.Bullet);
     BulletStorm.DartBullet = DartBullet;    
     Object.freeze(DartBullet);
+    Object.freeze(DartBullet.prototype);
     var EnemyUnit = (function (_super) {
         __extends(EnemyUnit, _super);
         function EnemyUnit(shooter) {
@@ -813,6 +867,7 @@ var BulletStorm;
     })(BulletStorm.Unit);
     BulletStorm.EnemyUnit = EnemyUnit;    
     Object.freeze(EnemyUnit);
+    Object.freeze(EnemyUnit.prototype);
     var PlayerUnit = (function (_super) {
         __extends(PlayerUnit, _super);
         function PlayerUnit(shooter) {
@@ -840,70 +895,114 @@ var BulletStorm;
     })(BulletStorm.Unit);
     BulletStorm.PlayerUnit = PlayerUnit;    
     Object.freeze(PlayerUnit);
+    Object.freeze(PlayerUnit.prototype);
+})(BulletStorm || (BulletStorm = {}));
+var BulletStorm;
+(function (BulletStorm) {
+    function animate(f) {
+        var requestAnimationFrame = window['requestAnimationFrame'] || window['mozRequestAnimationFrame'];
+        function update() {
+            requestAnimationFrame(function () {
+                f();
+                update();
+            });
+        }
+        update();
+    }
+    BulletStorm.animate = animate;
+})(BulletStorm || (BulletStorm = {}));
+var BulletStorm;
+(function (BulletStorm) {
+    var totalFrameCount = 0;
+    var keyTable = {
+    };
+    BulletStorm.animate(function () {
+        totalFrameCount += 1;
+    });
+    window.addEventListener('keydown', function (e) {
+        if(keyTable[e.keyCode] === undefined) {
+            keyTable[e.keyCode] = totalFrameCount;
+        }
+    });
+    window.addEventListener('keyup', function (e) {
+        delete keyTable[e.keyCode];
+    });
+    function getKey(keyCode) {
+        return keyTable[keyCode] !== undefined ? (keyTable[keyCode] - totalFrameCount) : null;
+    }
+    BulletStorm.getKey = getKey;
+    function getArrowKey() {
+        return new BulletStorm.Vector2((getKey(39) ? 1 : 0) - (getKey(37) ? 1 : 0), (getKey(40) ? 1 : 0) - (getKey(38) ? 1 : 0));
+    }
+    BulletStorm.getArrowKey = getArrowKey;
+    function getZKey() {
+        return getKey(90);
+    }
+    BulletStorm.getZKey = getZKey;
+    function getSpaceKey() {
+        return getKey(90);
+    }
+    BulletStorm.getSpaceKey = getSpaceKey;
+    function getShiftKey() {
+        return getKey(16);
+    }
+    BulletStorm.getShiftKey = getShiftKey;
+})(BulletStorm || (BulletStorm = {}));
+var BulletStorm;
+(function (BulletStorm) {
+    var fpsCountStart = performance.now();
+    var frameCount = 0;
+    var indicators = [];
+    function addFPSIndicater(elementID) {
+        var fpsIndicator = document.querySelector(elementID);
+        if(fpsIndicator) {
+            indicators.push(fpsIndicator);
+        }
+    }
+    BulletStorm.addFPSIndicater = addFPSIndicater;
+    BulletStorm.animate(function () {
+        frameCount += 1;
+        var now = performance.now();
+        var deltaTime = now - fpsCountStart;
+        if(deltaTime >= 1000) {
+            indicators.forEach(function (i) {
+                i.textContent = (frameCount * 1000 / deltaTime).toFixed(2);
+            });
+            frameCount = 0;
+            fpsCountStart = now;
+        }
+    });
 })(BulletStorm || (BulletStorm = {}));
 var BulletStorm;
 (function (BulletStorm) {
     window.addEventListener('load', function () {
-        var _this = this;
         var loader = new BulletStorm.ResourceLoader();
-        var bulletScript = loader.loadText('script/nway.ts');
         var stageScript = loader.loadText('script/kogasa.ts');
         loader.start(function () {
-            var canvas = document.querySelector('#canvas');
-            var graphics = _this.canvas.getContext('2d');
-            var fpsCountStart = performance.now();
-            var frameCount = 0;
-            var bulletsIndicator = document.querySelector('#bullets');
-            var fpsIndicator = document.querySelector('#fps');
+            var canvas = $('#canvas')[0];
+            var graphics = canvas.getContext('2d');
+            var bulletsIndicator = $('#bullets')[0];
+            BulletStorm.addFPSIndicater('#fps');
             var shooter = new BulletStorm.Shooter(canvas);
-            var stage = new BulletStorm.Stage(shooter);
-            shooter.stage = stage;
-            shooter.stage.setScript(stageScript());
-            var player = new BulletStorm.PlayerUnit(shooter);
-            player.position.x = canvas.width / 2;
-            player.position.y = canvas.height - 150;
-            shooter.player = player;
-            var keyTable = {
-            };
-            window.addEventListener('keydown', function (e) {
-                if(keyTable[e.keyCode] === undefined) {
-                    keyTable[e.keyCode] = shooter.stage.totalFrameCount;
-                }
-                if(!editing) {
-                    e.preventDefault();
-                }
-            });
-            window.addEventListener('keyup', function (e) {
-                delete keyTable[e.keyCode];
-                if(!editing) {
-                    e.preventDefault();
-                }
-            });
-            function getKey(keyCode) {
-                return keyTable[keyCode] !== undefined ? (keyTable[keyCode] - shooter.stage.totalFrameCount) : null;
-            }
-            var editing = false;
-            var textarea = document.getElementById('textarea');
-            var editor = document.getElementById('editor');
+            shooter.stage.script = stageScript();
+            var textarea = $('#textarea')[0];
+            var editor = $('#editor')[0];
             var samples = document.querySelectorAll('#samples > a');
-            document.getElementById('edit').addEventListener('click', function () {
-                textarea.value = shooter.stage.scriptText;
+            $('#edit').click(function () {
+                textarea.value = shooter.stage.script;
                 editor.setAttribute('style', 'display: block;');
-                editing = true;
             });
-            document.getElementById('edit_cancel').addEventListener('click', function () {
+            $('#edit_cancel').click(function () {
                 editor.removeAttribute('style');
-                editing = false;
             });
-            document.getElementById('edit_ok').addEventListener('click', function () {
-                shooter.stage.setScript(textarea.value);
+            $('#edit_ok').click(function () {
+                shooter.stage.script = textarea.value;
                 editor.removeAttribute('style');
-                editing = false;
             });
             for(var i = 0; i < samples.length; i++) {
                 (function () {
                     var a = samples[i];
-                    a.addEventListener('click', function (e) {
+                    $(a).click(function (e) {
                         $.get(a.getAttribute('href'), function (data) {
                             textarea.value = data;
                         });
@@ -911,73 +1010,37 @@ var BulletStorm;
                     });
                 })();
             }
-            var requestAnimationFrame = window['requestAnimationFrame'] || window['mozRequestAnimationFrame'];
-            function updateFrame() {
-                requestAnimationFrame(function () {
-                    if(editing === false) {
-                        shooter.player.velocity.x = 0;
-                        shooter.player.velocity.y = 0;
-                        if(getKey(32)) {
-                            shooter.stage.swing();
-                        }
-                        var accurate = getKey(16) !== null;
-                        var speed = accurate ? 1 : 3;
-                        shooter.stage.pointerAlpha = Math.max(0, Math.min(1, shooter.stage.pointerAlpha + 0.1 * (accurate ? 1 : -1)));
-                        if(getKey(37)) {
-                            shooter.player.velocity.x -= speed;
-                        }
-                        if(getKey(38)) {
-                            shooter.player.velocity.y -= speed;
-                        }
-                        if(getKey(39)) {
-                            shooter.player.velocity.x += speed;
-                        }
-                        if(getKey(40)) {
-                            shooter.player.velocity.y += speed;
-                        }
-                        if(getKey(90)) {
-                            for(var i = 0; i < 1; i++) {
-                                var bullet = new BulletStorm.DartBullet();
-                                bullet.position = shooter.player.position.clone();
-                                bullet.position.y += 30 * i;
-                                bullet.velocity = new BulletStorm.Vector2(0, -30);
-                                stage.playerBullets.push(bullet);
+            BulletStorm.animate(function () {
+                if(editor.hasAttribute('style') === false) {
+                    shooter.player.velocity.set(0, 0);
+                    var accurate = BulletStorm.getShiftKey() !== null;
+                    var speed = accurate ? 1 : 3;
+                    shooter.stage.pointerAlpha = Math.max(0, Math.min(1, shooter.stage.pointerAlpha + 0.1 * (accurate ? 1 : -1)));
+                    shooter.player.velocity.add(BulletStorm.getArrowKey().mul(speed));
+                    if(BulletStorm.getZKey()) {
+                        var bullet = new BulletStorm.DartBullet();
+                        bullet.position.copy(shooter.player.position);
+                        bullet.velocity.set(0, -30);
+                        shooter.stage.playerBullets.push(bullet);
+                    }
+                    shooter.update();
+                    shooter.stage.paint(graphics);
+                    bulletsIndicator.textContent = shooter.stage.bullets.length.toString();
+                    function updateGauge(containerID, imagePath, value) {
+                        var gauge = document.querySelector(containerID);
+                        if(gauge.childNodes.length !== value) {
+                            while(gauge.childNodes.length > 0) {
+                                gauge.removeChild(gauge.childNodes[0]);
                             }
-                        }
-                        shooter.update();
-                        shooter.stage.paint(graphics);
-                        bulletsIndicator.textContent = stage.bullets.length.toString();
-                        var lifeGauge = document.querySelector('#life');
-                        if(lifeGauge.childNodes.length !== shooter.player.life) {
-                            while(lifeGauge.childNodes.length > 0) {
-                                lifeGauge.removeChild(lifeGauge.childNodes[0]);
+                            for(var i = 0; i < value; i++) {
+                                gauge.appendChild(BulletStorm.loadImage(imagePath));
                             }
-                            for(var i = 0; i < shooter.player.life; i++) {
-                                lifeGauge.appendChild(BulletStorm.loadImage(BulletStorm.origin + 'heart.svg'));
-                            }
-                        }
-                        var bombGauge = document.querySelector('#bomb');
-                        if(bombGauge.childNodes.length !== shooter.player.life) {
-                            while(bombGauge.childNodes.length > 0) {
-                                bombGauge.removeChild(bombGauge.childNodes[0]);
-                            }
-                            for(var i = 0; i < shooter.player.bomb; i++) {
-                                bombGauge.appendChild(BulletStorm.loadImage(BulletStorm.origin + 'star.svg'));
-                            }
-                        }
-                        frameCount += 1;
-                        var now = performance.now();
-                        var deltaTime = now - fpsCountStart;
-                        if(deltaTime >= 1000) {
-                            fpsIndicator.textContent = (frameCount * 1000 / deltaTime).toFixed(2);
-                            frameCount = 0;
-                            fpsCountStart = now;
                         }
                     }
-                    updateFrame();
-                });
-            }
-            updateFrame();
+                    updateGauge('#life', BulletStorm.origin + 'heart.svg', shooter.player.life);
+                    updateGauge('#bomb', BulletStorm.origin + 'star.svg', shooter.player.bomb);
+                }
+            });
         });
     });
 })(BulletStorm || (BulletStorm = {}));

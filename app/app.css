@@ -60,8 +60,11 @@ html, body{
 	background-color: rgba(255, 255, 255, 0.9);
 	font-family: monospace;
 	font-size: 14px;
-	white-space: pre-wrap;
+	white-space: pre;
+	word-wrap: normal;
+	overflow: scroll;
 	padding: 8px;
+	border-radius: 4px;
 }
 
 #edit_ok{
@@ -80,8 +83,22 @@ html, body{
 	font-size: 20px;
 }
 
+#edit_debug{
+	position: absolute;
+	left: 50px;
+	top: 530px;
+	font-size: 20px;
+	color: white;	
+}
+
 #samples{
 	color: white;
 	margin: 1em;
 }
 
+#samples a {
+	background-color: white;
+	padding: 4px;
+	border-radius: 2px;
+	text-decoration: none;
+}

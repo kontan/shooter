@@ -1,3 +1,11 @@
+// ステージスクリプト全体は、スクリプトがロードされたときに一度だけ呼ばれます。
+
+// shooter オブジェクトはゲーム全体を表すオブジェクトです。
+
+
+// 弾や敵キャラクターを初期化します。初期化しない場合は、スクリプトが読み込まれるたびにさらに追加されることになります。
+shooter.stage.initialize();
+
 // nway.js
 var MaxBullets = 200;
 var Frequency = 60;
@@ -5,55 +13,13 @@ var Ways = 8;
 var Varying = 0.2;
 var BulletSpeed = 2.0;
 
-// nway 弾を発射します。
-// @param n 一度に発射される弾丸の個数
-// @param d 弾丸が分散する角度
-// @param target 弾丸の狙う位置
-function nway(n, d, position, target){
-    // 弾丸を発射する角度を求めます。
-    // そのために、発射位置からターゲットの位置への方向ベクトルを求めます。
-    var v = new Vector2();
-
-    // unit はこのスクリプトが設定されている敵キャラクターです。
-    // その位置からターゲットの位置を減算すると、発射の方向へのベクトルになります。
-    // v.subVectors(u, t) は v = u - t の意味です。
-    v.subVectors(target, position);
-
-    // 方向ベクトル v がわかれば、v.getAngle() で角度 を求めることができます。
-    var angle = v.getAngle();
-
-    // n-way 弾なので n 回繰り返してループします。
-    // ただし、ステージに弾丸が多すぎないように、MaxBullets より少ない時だけ実行します。
-    for(var i = 0; i < n && shooter.stage.bullets.length < MaxBullets; i++){
-
-        // 弾丸を作成します。初期状態では位置 (0,0), 速度(0,0) です。
-        var bullet = new LargeBullet();
-
-        // 弾丸の初期位置をこの敵キャラクターと同じにしています
-        bullet.position = position.clone();
-
-        // angle が n-way 弾全体の発射方向です。
-        // d はn-way 弾のとなりあう弾丸の角度で、それが n 個発射されるので、
-        // 弾丸の広がる扇形の全体の角度は d * (n - 1) です。
-        // 従って、一番端の弾丸の角度は angle - d * (n - 1) * 0.5 で表されます。
-        // 一番端の弾丸から d * i　ずつ角度を変えながら発射すれば n-way 弾になります。
-        // これをまとめると、 i 番目の弾丸の角度は angle - d * (n - 1) * 0.5 + d * i となり、
-        // これを整理すると angle + d * (i - (n - 1) * 0.5) となります。
-        // Vector2.fromAngle は角度と長さから新たなベクトルを作成します。
-        bullet.velocity = Vector2.fromAngle(angle + d * (i - (n - 1) * 0.5), BulletSpeed);
-        
-        // 弾丸をステージに追加します。Stage.bullets は
-        // 現在のステージに存在する敵キャラクターが発射したすべての弾丸を保持するリストです。
-        shooter.stage.bullets.push(bullet);
-    }
-}
-
 function newEnemy(){
     var now = 0;
 
     var enemy = shooter.newEnemy();
-    enemy.position.x = shooter.width / 2;
-    enemy.position.y = shooter.height / 2 - 160;
+    enemy.position.set(shooter.width / 2, shooter.height / 2 - 160);
+
+    // updateUnit は各ユニットごとにあるプロパティで、毎フレーム呼び出される関数です
     enemy.updateUnit = function(){
         
         // unit はこのスクリプトが設定されている敵キャラクターです。
@@ -63,7 +29,7 @@ function newEnemy(){
         // shooter.now はゲームを開始してから経過したフレーム数を number で返します。
         // ここの条件式では、Frequency フレームに一度弾が発射されるようになっています。 
         if(shooter.now % Frequency === 0){
-            nway(Ways, Varying, enemy.position, shooter.player.position);
+            shooter.stage.nway(Ways, Varying, enemy.position, shooter.player.position, BulletSpeed)();
         }
     };
 
@@ -72,8 +38,44 @@ function newEnemy(){
 
 newEnemy();
 
+// shooter.stage.loadImage で画像を読み込むことができます。
+// 関数呼び出しの返り値は関数オブジェクトで、それを呼び出すと、リソースの読み込みが完了している場合は要求したリソース、
+// そうでなければ undefined が返ります。
+// loadImage の直後はリソースは使用不可なので気を付けます
+var backgroundImageRes = shooter.stage.loadImage('res/ground.png');
+var cloudImageRes = shooter.stage.loadImage('res/cloud.png');
+var cloudUpperImageRes = shooter.stage.loadImage('res/cloud_upper.png');
+var stageScrollDelta = 0;
+var cloudScrollDelta = 0;
+var lowerCloudScrollDelta = 0;
+
+// スクリプト内でリソースを読み込みを開始した場合、それがすべて読み込まれると exports.complete が呼び出されます。
+// exports.complete の呼び出しが終わると、このプロパティは削除されます。
+// exports でエクスポートされた他の関数についても、リソースの読み込みが完了するまでは呼び出されません。
+exports.complete = function(){
+
+};
+
+// ステージスクリプト内では、スコープ内に exports という変数があります。
+// exports には空のオブジェクトが束縛されており、スクリプトでは自由に値を設定することができます。
+// exports のいくつかのプロパティは特別に扱われます。
+// exports.update に設定された関数は、毎フレーム呼び出されます。
 exports.update = function(){ 
-    //if(shooter.now % 100 === 0){
-    //    newEnemy();
-    //}
+    stageScrollDelta = (stageScrollDelta + 2.0) % backgroundImageRes().height;    
+    cloudScrollDelta = (cloudScrollDelta + 22.2) % cloudImageRes().height;
+    lowerCloudScrollDelta = (lowerCloudScrollDelta + 8.7) % cloudUpperImageRes().height;  
+};
+
+// 背景を描画する関数です。
+exports.paintBackground = function(g){
+    g.drawImage(backgroundImageRes(), 0, stageScrollDelta);
+    g.drawImage(backgroundImageRes(), 0, stageScrollDelta - backgroundImageRes().height);
+
+    g.drawImage(cloudImageRes(), 0, lowerCloudScrollDelta);
+    g.drawImage(cloudImageRes(), 0, lowerCloudScrollDelta - cloudImageRes().height);
+
+    g.globalCompositeOperation = 'lighter';
+    g.drawImage(cloudUpperImageRes(), 0, cloudScrollDelta);
+    g.drawImage(cloudUpperImageRes(), 0, cloudScrollDelta - cloudUpperImageRes().height);
+    g.globalCompositeOperation = 'source-over';    
 };

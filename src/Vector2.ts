@@ -59,4 +59,5 @@ module BulletStorm {
         }
     }
     Object.freeze(Vector2);
+    Object.freeze(Vector2.prototype);    
 }

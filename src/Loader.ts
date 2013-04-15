@@ -28,6 +28,9 @@ module BulletStorm {
             img.addEventListener('abort', this.loaded);
             this.loaders.push(()=>{
                 img.src = path;
+                if(img.complete){
+                    this.loaded();
+                }
             });
             return ()=>img.complete ? img : null;
         }

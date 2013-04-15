@@ -1,207 +1,108 @@
+/// <reference path="jquery.d.ts" />
 /// <reference path="BulletStorm.ts" />
+/// <reference path="Keyboard.ts" />
+/// <reference path="Util.ts" />
+/// <reference path="FPSCounter.ts" />
 
 module BulletStorm {
 
-    /////////////////////////////////////////////////////////
-    // Initialization
-    ///////////////////////////////////////////////////////////
-
     window.addEventListener('load', ()=>{
 
-        var loader: BulletStorm.ResourceLoader = new BulletStorm.ResourceLoader();
-
-        var bulletScript: () => string = loader.loadText('script/nway.ts');
+        var loader: ResourceLoader = new ResourceLoader();
 
         var stageScript: () => string = loader.loadText('script/kogasa.ts');
 
         loader.start(()=>{
 
-            // references
-            var canvas: HTMLCanvasElement = <HTMLCanvasElement> document.querySelector('#canvas');
-            var graphics: CanvasRenderingContext2D = this.canvas.getContext('2d');
+            // references //////////////////////////////////////////////////////////////////////////////////////////////////////////
+            var canvas: HTMLCanvasElement = <HTMLCanvasElement> $('#canvas')[0];
+            var graphics: CanvasRenderingContext2D = canvas.getContext('2d');
+            var bulletsIndicator: HTMLSpanElement = <HTMLSpanElement> $('#bullets')[0];
             
-            // fps counter
-            var fpsCountStart: number = performance.now();
-            var frameCount: number = 0;
-            var bulletsIndicator: HTMLSpanElement = <HTMLSpanElement> document.querySelector('#bullets');
-            var fpsIndicator: HTMLSpanElement = <HTMLSpanElement> document.querySelector('#fps');
+            // fps count            
+            addFPSIndicater('#fps');
 
-            // game object initialization
+            // game object initialization /////////////////////////////////////////////////////////////////////////////////////////////
             var shooter: Shooter = new Shooter(canvas);
+            shooter.stage.script = stageScript();
 
-            var stage: Stage = new Stage(shooter);
-            shooter.stage = stage;
-            shooter.stage.setScript(stageScript());
-
-            var player: PlayerUnit = new PlayerUnit(shooter);
-            player.position.x = canvas.width / 2;
-            player.position.y = canvas.height - 150;
-            shooter.player = player;
-
-            // event handling
-
-            var keyTable: { [keyCode: number]: number; } = <any>{};
-
-            window.addEventListener('keydown', (e: KeyboardEvent)=>{
-                if(keyTable[e.keyCode] === undefined){
-                    keyTable[e.keyCode] = shooter.stage.totalFrameCount;
-                }
-                if( ! editing){
-                    e.preventDefault();
-                }
-            });
-
-            window.addEventListener('keyup', (e: KeyboardEvent)=>{
-                delete keyTable[e.keyCode];
-                if( ! editing){
-                    e.preventDefault();
-                }
-            });    
-
-            function getKey(keyCode: number): number{
-                return keyTable[keyCode] !== undefined ? (keyTable[keyCode] - shooter.stage.totalFrameCount) : null;
-            }
-
-            // editor event handling
-
-            var editing: bool = false;
-
-            var textarea: HTMLTextAreaElement = <HTMLTextAreaElement>document.getElementById('textarea');
-            var editor: HTMLElement = document.getElementById('editor');
+            // editor event handling //////////////////////////////////////////////////////////////////////////////////////////////////
+            var textarea: HTMLTextAreaElement = <HTMLTextAreaElement> $('#textarea')[0];
+            var editor: HTMLElement = $('#editor')[0];
             var samples: NodeList = document.querySelectorAll('#samples > a');
 
-            document.getElementById('edit').addEventListener('click', ()=>{
-                textarea.value = shooter.stage.scriptText;
+            $('#edit').click(()=>{
+                textarea.value = shooter.stage.script;
                 editor.setAttribute('style', 'display: block;');
-                editing = true;
             });
 
-            document.getElementById('edit_cancel').addEventListener('click', ()=>{
+            $('#edit_cancel').click(()=>{
                 editor.removeAttribute('style');
-                editing = false;
             });
 
-            document.getElementById('edit_ok').addEventListener('click', ()=>{
-                shooter.stage.setScript(textarea.value);
+            $('#edit_ok').click(()=>{
+                shooter.stage.script = textarea.value;
                 editor.removeAttribute('style');
-                editing = false;
             });
 
-            for(var i = 0; i < samples.length; i++){
-                ()=>{
-                    var a = <HTMLAnchorElement> samples[i];
-                    a.addEventListener('click', (e: MouseEvent)=>{
-                        $.get(a.getAttribute('href'), function(data){
-                            textarea.value = data;
-                        });
-                        e.preventDefault();
+            for(var i = 0; i < samples.length; i++)()=>{
+                var a = <HTMLAnchorElement> samples[i];
+                $(a).click((e: MouseEvent)=>{
+                    $.get(a.getAttribute('href'), function(data){
+                        textarea.value = data;
                     });
-                }();
-            }
+                    e.preventDefault();
+                });
+            }();
 
             // game loop ///////////////////////////////////////////////////////////////
-            var requestAnimationFrame = window['requestAnimationFrame'] || 
-                                        window['mozRequestAnimationFrame'];
 
-            function updateFrame(): void{
-                requestAnimationFrame(()=>{                
-                    if(editing === false){
-                        // process inputs ///////////////////////////////////////////////////////////
+            animate(()=>{                
+                if(editor.hasAttribute('style') === false){
+                    // process inputs ///////////////////////////////////////////////////////////
 
-                        // preprocess
-                        
-                        shooter.player.velocity.x = 0;
-                        shooter.player.velocity.y = 0;
+                    // preprocess
+                    shooter.player.velocity.set(0, 0);
 
-                        // key 
-                        if(getKey(32)){ // space key
-                            shooter.stage.swing();
-                        }
+                    // key 
+                    var accurate = getShiftKey() !== null;
+                    var speed = accurate ? 1 : 3;
+                    shooter.stage.pointerAlpha = Math.max(0, Math.min(1, shooter.stage.pointerAlpha + 0.1 * (accurate ? 1 : -1)));
+                    shooter.player.velocity.add(getArrowKey().mul(speed));
 
-                        var accurate = getKey(16) !== null;
-                        var speed = accurate ? 1 : 3;
-                        shooter.stage.pointerAlpha = Math.max(0, Math.min(1, shooter.stage.pointerAlpha + 0.1 * (accurate ? 1 : -1)));
+                    if(getZKey()){
+                        var bullet = new DartBullet();
+                        bullet.position.copy(shooter.player.position);
+                        bullet.velocity.set(0, -30);
+                        shooter.stage.playerBullets.push(bullet);
+                    }
 
-                        if(getKey(37)){
-                            shooter.player.velocity.x -= speed;
-                        }
-                        if(getKey(38)){
-                            shooter.player.velocity.y -= speed;
-                        }
-                        if(getKey(39)){
-                            shooter.player.velocity.x += speed;
-                        }
-                        if(getKey(40)){
-                            shooter.player.velocity.y += speed;
-                        }
+                    // update //////////////////////////////////////////////////////////////////////////
+                    shooter.update();
+                    shooter.stage.paint(graphics);
 
-                        if(getKey(90)){    // z
-                            for(var i = 0; i < 1; i++){
-                                var bullet = new DartBullet();
-                                bullet.position = shooter.player.position.clone();
-                                bullet.position.y += 30 * i;
-                                bullet.velocity = new Vector2(0, -30);
-                                stage.playerBullets.push(bullet);
-                            }
-                        }
+                    // update side bar //////////////////////////////////////////////////////
+                    bulletsIndicator.textContent = shooter.stage.bullets.length.toString();
 
-                        // update //////////////////////////////////////////////////////////////////////////
-                        shooter.update();
-
-                        // paint　///////////////////////////////////////////////////////////////////////////
-                        shooter.stage.paint(graphics);
-
-
-
-                        // update side bar //////////////////////////////////////////////////////
-
-                        bulletsIndicator.textContent = stage.bullets.length.toString();
-
-                        // heart
-                        var lifeGauge = <HTMLSpanElement> document.querySelector('#life');
-                        if(lifeGauge.childNodes.length !== shooter.player.life){
+                    // heart
+                    function updateGauge(containerID: string, imagePath: string, value: number): void {
+                        var gauge = <HTMLSpanElement> document.querySelector(containerID);
+                        if(gauge.childNodes.length !== value){
                             // remove all child
-                            while(lifeGauge.childNodes.length > 0){
-                                lifeGauge.removeChild(lifeGauge.childNodes[0]);
+                            while(gauge.childNodes.length > 0){
+                                gauge.removeChild(gauge.childNodes[0]);
                             }
                             // add images
-                            for(var i = 0; i < shooter.player.life; i++){
-                                lifeGauge.appendChild(loadImage(BulletStorm.origin + 'heart.svg'));
+                            for(var i = 0; i < value; i++){
+                                gauge.appendChild(loadImage(imagePath));
                             }
-                        }
-
-                        // bomb
-                        var bombGauge = <HTMLSpanElement> document.querySelector('#bomb');
-                        if(bombGauge.childNodes.length !== shooter.player.life){
-                            // remove all child
-                            while(bombGauge.childNodes.length > 0){
-                                bombGauge.removeChild(bombGauge.childNodes[0]);
-                            }
-                            // add images
-                            for(var i = 0; i < shooter.player.bomb; i++){
-                                bombGauge.appendChild(loadImage(BulletStorm.origin + 'star.svg'));
-                            }
-                        }
-
-                        // fps count /////////////////////////////////////////////////////////////
-                        frameCount += 1;
-                        var now = performance.now();
-                        var deltaTime = now - fpsCountStart;
-                        if(deltaTime >= 1000){
-                            fpsIndicator.textContent = (frameCount * 1000 / deltaTime).toFixed(2);
-                            frameCount = 0;
-                            fpsCountStart = now;
                         }
                     }
 
-                    // request next frame ////////////////////////////////////////////////////////////
-                    updateFrame();    
-                });
-            }
-        
-            // start game loop
-            updateFrame();
-            
+                    updateGauge('#life', BulletStorm.origin + 'heart.svg', shooter.player.life);
+                    updateGauge('#bomb', BulletStorm.origin + 'star.svg', shooter.player.bomb);
+                }
+            });
         });
     });
 }
